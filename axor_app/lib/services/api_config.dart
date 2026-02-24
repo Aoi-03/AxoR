@@ -8,7 +8,10 @@ class ApiConfig {
   // static const String baseUrl = 'http://localhost:3001';
   
   // For Real Device - WiFi Connection (Same Network)
-  static const String baseUrl = 'http://192.168.0.103:3001';
+  // static const String baseUrl = 'http://192.168.0.103:3001';
+  
+  // For Render Deployment (Works from anywhere!)
+  static const String baseUrl = 'https://axor.onrender.com';
   
   // API Endpoints
   static const String health = '/health';

@@ -319,8 +319,14 @@ async function extractAndCacheCover(songId, fileBuffer) {
   }
 }
 
-// Helper: Pre-cache all covers at startup
+// Helper: Pre-cache all covers at startup (DISABLED for memory optimization)
 async function preCacheAllCovers() {
+  // DISABLED: Pre-caching all covers uses too much memory on free tier (512MB limit)
+  // Covers will be cached on-demand when requested instead
+  console.log(`ℹ️  Cover pre-caching disabled (on-demand caching enabled)`);
+  return;
+  
+  /* ORIGINAL CODE - DISABLED
   if (STORAGE_MODE !== 'mega' || songsCache.length === 0) return;
   
   console.log(`🖼️  Pre-caching covers for ${songsCache.length} songs...`);
@@ -362,6 +368,7 @@ async function preCacheAllCovers() {
   }
   
   console.log(`✅ Cover pre-caching complete! (${alreadyCached} already cached, ${cachedCount} newly cached)`);
+  */
 }
 
 // Helper: Save metadata cache
