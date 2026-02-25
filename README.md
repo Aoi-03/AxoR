@@ -1,6 +1,6 @@
 # AXOR Music App
 
-A modern music streaming app with AI-powered recommendations, built with Flutter and Node.js.
+A modern music streaming app with AI-powered recommendations, built with Flutter and Node.js
 
 ## Project Structure
 
