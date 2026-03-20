@@ -2,7 +2,7 @@
 
 A modern music streaming app with AI-powered recommendations, built with Flutter and Node.js
 
-## Project Structure
+## Project Structure:
 
 ```
 ├── axor_app/              # Flutter mobile app
