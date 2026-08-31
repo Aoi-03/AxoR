@@ -26,6 +26,7 @@ npm install
 cp .env.example .env
 # Edit .env with your MEGA credentials
 npm start
+and it will work fine
 ```
 
 ### Flutter App Setup
