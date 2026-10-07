@@ -2,7 +2,6 @@ import 'package:flutter/material.dart';
 import '../../constants/colors.dart';
 import '../../widgets/custom_button.dart';
 import '../../widgets/song_queue_table.dart';
-import '../../widgets/music_player_bottom.dart';
 import '../../utils/mode_manager.dart';
 
 class StudyModeScreen extends StatefulWidget {

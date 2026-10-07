@@ -1,230 +1,270 @@
 import 'package:flutter/foundation.dart';
 import 'package:just_audio/just_audio.dart';
-import 'package:http/http.dart' as http;
-import 'dart:convert';
+import '../services/google_drive_service.dart';
+import '../services/dynamic_island_service.dart';
 import '../models/song.dart';
-import 'api_service.dart';
-import 'api_config.dart';
 
-/// Audio Player Service
-/// Manages audio playback with just_audio
+/// Audio Player Service — AXOR 2.0
+/// Manages audio playback with just_audio and Google Drive streaming
 class AudioPlayerService with ChangeNotifier {
   static final AudioPlayerService _instance = AudioPlayerService._internal();
   factory AudioPlayerService() => _instance;
-  
+
   AudioPlayerService._internal() {
     _init();
   }
-  
+
   final AudioPlayer _player = AudioPlayer();
-  final ApiService _apiService = ApiService();
-  Song? _currentSong;
-  List<Song> _playlist = [];
+  final GoogleDriveService _driveService = GoogleDriveService();
+
+  DriveAudioFile? _currentSong;
+  List<DriveAudioFile> _queue = [];
   int _currentIndex = 0;
-  int _shuffleRepeatState = 0; // 0: repeat, 1: repeat one, 2: shuffle, 3: AI
-  
-  // Getters
+  int _playMode = 0; // 0: repeat, 1: repeat one, 2: shuffle, 3: AI
+
+  // ── Getters ──────────────────────────────────────────
   AudioPlayer get player => _player;
-  Song? get currentSong => _currentSong;
-  List<Song> get playlist => _playlist;
+  DriveAudioFile? get currentSong => _currentSong;
+  List<DriveAudioFile> get queue => _queue;
   int get currentIndex => _currentIndex;
   bool get isPlaying => _player.playing;
   Duration get position => _player.position;
   Duration get duration => _player.duration ?? Duration.zero;
-  int get shuffleRepeatState => _shuffleRepeatState;
-  
-  // Setter for shuffle/repeat state
-  void setShuffleRepeatState(int state) {
-    _shuffleRepeatState = state;
-    notifyListeners();
+  int get playMode => _playMode;
+  int get shuffleRepeatState => _playMode;
+  bool get hasSong => _currentSong != null;
+  bool get hasQueue => _queue.isNotEmpty;
+
+  Stream<Duration> get positionStream => _player.positionStream;
+  Stream<Duration?> get durationStream => _player.durationStream;
+  Stream<PlayerState> get playerStateStream => _player.playerStateStream;
+
+  // ── Play Mode Labels ──────────────────────────────────
+  String get playModeLabel {
+    switch (_playMode) {
+      case 0: return 'Repeat';
+      case 1: return 'Repeat One';
+      case 2: return 'Shuffle';
+      case 3: return 'AI Flow';
+      default: return 'Repeat';
+    }
   }
-  
+
+  // ── Init ──────────────────────────────────────────────
   void _init() {
-    // Listen to player state changes
+    DynamicIslandService.initialize((action) {
+      if (action == 'previous') {
+        playPrevious();
+      } else if (action == 'playPause') {
+        togglePlayPause();
+      } else if (action == 'next') {
+        playNext();
+      }
+    });
+
     _player.playerStateStream.listen((state) {
       notifyListeners();
-      
-      // Auto-play next song when current finishes
+      if (_currentSong != null) {
+        DynamicIslandService.update(
+          title: _currentSong!.displayTitle,
+          artist: _currentSong!.displayArtist,
+          isPlaying: state.playing,
+          coverUrl: _currentSong!.coverArtUrl,
+          positionMs: _player.position.inMilliseconds,
+          durationMs: _player.duration?.inMilliseconds ??
+              ((_currentSong!.durationSeconds ?? 0) * 1000),
+        );
+      }
       if (state.processingState == ProcessingState.completed) {
         _handleSongComplete();
       }
     });
-    
-    // Listen to position changes
-    _player.positionStream.listen((_) {
+
+    _player.positionStream.listen((pos) {
       notifyListeners();
     });
   }
-  
-  /// Handle song completion based on shuffle/repeat/AI state
-  Future<void> _handleSongComplete() async {
-    if (_currentSong == null) return;
-    
-    switch (_shuffleRepeatState) {
-      case 0: // Repeat playlist
-        playNext();
-        break;
-      case 1: // Repeat one song
-        await _player.seek(Duration.zero);
-        await _player.play();
-        break;
-      case 2: // Shuffle
-        _playRandomSong();
-        break;
-      case 3: // AI mode - play similar song
-        await _playAISimilarSong();
-        break;
-      default:
-        playNext();
-    }
-  }
-  
-  /// Play random song from playlist (shuffle mode)
-  Future<void> _playRandomSong() async {
-    if (_playlist.isEmpty) return;
-    
-    final random = DateTime.now().millisecondsSinceEpoch % _playlist.length;
-    _currentIndex = random;
-    await playSong(_playlist[_currentIndex], playlist: _playlist, index: _currentIndex);
-  }
-  
-  /// Play AI-suggested similar song
-  Future<void> _playAISimilarSong() async {
-    if (_currentSong == null) return;
-    
-    try {
-      if (kDebugMode) {
-        print('🤖 AI Mode: Finding similar song to ${_currentSong!.title}');
-      }
-      
-      // Fetch similar songs from backend
-      final similarSongs = await _apiService.getSimilarSongs(_currentSong!.id);
-      
-      if (similarSongs.isNotEmpty) {
-        // Play the most similar song
-        final nextSong = similarSongs.first;
-        
-        if (kDebugMode) {
-          print('🎯 AI suggests: ${nextSong.title} (similarity: ${nextSong.similarity ?? 0})');
-        }
-        
-        // Update playlist with similar songs
-        _playlist = similarSongs;
-        _currentIndex = 0;
-        
-        await playSong(nextSong, playlist: _playlist, index: 0);
-      } else {
-        // Fallback to next song if no similar songs found
-        if (kDebugMode) {
-          print('⚠️  No similar songs found, playing next');
-        }
-        playNext();
-      }
-    } catch (e) {
-      if (kDebugMode) {
-        print('❌ Error fetching similar songs: $e');
-      }
-      // Fallback to next song on error
-      playNext();
-    }
-  }
-  
-  /// Play a song
-  Future<void> playSong(Song song, {List<Song>? playlist, int? index}) async {
+
+  // ── Playback Controls ─────────────────────────────────
+
+  /// Play a song from Drive
+  Future<void> playSong(
+    DriveAudioFile song, {
+    List<DriveAudioFile>? playlist,
+    int? index,
+  }) async {
     try {
       _currentSong = song;
       if (playlist != null) {
-        _playlist = playlist;
+        _queue = playlist;
         _currentIndex = index ?? 0;
       }
-      
-      final streamUrl = song.streamUrl;
-      
+
       if (kDebugMode) {
-        print('🎵 Playing: ${song.title} - ${song.artist}');
-        print('📡 Stream URL: $streamUrl');
+        print('🎵 Playing: ${song.displayTitle} — ${song.displayArtist}');
       }
-      
-      // Stop current playback first
+
       await _player.stop();
-      
-      // Set audio source - direct streaming from MEGA
-      if (kDebugMode) {
-        print('⏳ Loading stream...');
-      }
-      
-      await _player.setUrl(streamUrl).timeout(
-        const Duration(seconds: 30),
-        onTimeout: () {
-          throw Exception('Connection timeout - cannot reach backend');
-        },
-      );
-      
-      if (kDebugMode) {
-        print('✅ Stream loaded, starting playback...');
-      }
-      
-      // Start playing
+
+      // Get auth headers only if streaming from Google Drive
+      final isDrive = song.streamUrl.contains('googleapis.com');
+      final headers = isDrive ? await _driveService.getAuthHeaders() : null;
+
+      // Stream audio source
+      await _player
+          .setAudioSource(
+            AudioSource.uri(
+              Uri.parse(song.streamUrl),
+              headers: headers,
+            ),
+          )
+          .timeout(
+            const Duration(seconds: 30),
+            onTimeout: () => throw Exception('Stream timeout'),
+          );
+
       await _player.play();
-      
-      if (kDebugMode) {
-        print('✅ Playback started');
-      }
-      
+
+      DynamicIslandService.show(
+        title: song.displayTitle,
+        artist: song.displayArtist,
+        isPlaying: true,
+        coverUrl: song.coverArtUrl,
+        positionMs: 0,
+        durationMs: (song.durationSeconds ?? 0) * 1000,
+      );
+
+      if (kDebugMode) print('✅ Playback started');
       notifyListeners();
     } catch (e) {
-      if (kDebugMode) {
-        print('❌ Error playing song: $e');
-      }
-      
-      // Reset state on error
+      if (kDebugMode) print('❌ Error playing: $e');
       _currentSong = null;
+      DynamicIslandService.hide();
       notifyListeners();
-      
-      // Rethrow so UI can show error
       rethrow;
     }
   }
-  
+
+  /// Play a Song model from the local backend
+  Future<void> playAxorSong(
+    Song song, {
+    List<Song>? playlist,
+    int? index,
+  }) async {
+    final driveSong = DriveAudioFile.fromSong(song);
+    final drivePlaylist = playlist?.map((s) => DriveAudioFile.fromSong(s)).toList();
+    await playSong(driveSong, playlist: drivePlaylist, index: index);
+  }
+
   /// Toggle play/pause
   Future<void> togglePlayPause() async {
     if (_player.playing) {
       await _player.pause();
+      DynamicIslandService.update(
+        isPlaying: false,
+        coverUrl: _currentSong?.coverArtUrl,
+        positionMs: _player.position.inMilliseconds,
+        durationMs: _player.duration?.inMilliseconds,
+      );
     } else {
       await _player.play();
+      if (_currentSong != null) {
+        DynamicIslandService.show(
+          title: _currentSong!.displayTitle,
+          artist: _currentSong!.displayArtist,
+          isPlaying: true,
+          coverUrl: _currentSong!.coverArtUrl,
+          positionMs: _player.position.inMilliseconds,
+          durationMs: _player.duration?.inMilliseconds,
+        );
+      }
     }
     notifyListeners();
   }
-  
-  /// Play next song
+
+  /// Play next
   Future<void> playNext() async {
-    if (_playlist.isEmpty) return;
-    
-    _currentIndex = (_currentIndex + 1) % _playlist.length;
-    await playSong(_playlist[_currentIndex], playlist: _playlist, index: _currentIndex);
+    if (_queue.isEmpty) return;
+    _currentIndex = (_currentIndex + 1) % _queue.length;
+    await playSong(_queue[_currentIndex], playlist: _queue, index: _currentIndex);
   }
-  
-  /// Play previous song
+
+  /// Play previous
   Future<void> playPrevious() async {
-    if (_playlist.isEmpty) return;
-    
-    _currentIndex = (_currentIndex - 1 + _playlist.length) % _playlist.length;
-    await playSong(_playlist[_currentIndex], playlist: _playlist, index: _currentIndex);
+    if (_queue.isEmpty) return;
+    // If more than 3 seconds in, restart; otherwise go previous
+    if (_player.position.inSeconds > 3) {
+      await _player.seek(Duration.zero);
+      return;
+    }
+    _currentIndex = (_currentIndex - 1 + _queue.length) % _queue.length;
+    await playSong(_queue[_currentIndex], playlist: _queue, index: _currentIndex);
   }
-  
-  /// Seek to position
+
+  /// Seek
   Future<void> seek(Duration position) async {
     await _player.seek(position);
   }
-  
-  /// Stop playback
+
+  /// Stop
   Future<void> stop() async {
     await _player.stop();
     _currentSong = null;
+    DynamicIslandService.hide();
     notifyListeners();
   }
-  
-  /// Dispose
+
+  /// Set play mode
+  void setPlayMode(int mode) {
+    _playMode = mode;
+    notifyListeners();
+  }
+
+  /// Alias for setPlayMode
+  void setShuffleRepeatState(int state) => setPlayMode(state);
+
+  /// Cycle play mode
+  void cyclePlayMode() {
+    _playMode = (_playMode + 1) % 4;
+    notifyListeners();
+  }
+
+  // ── Private ───────────────────────────────────────────
+
+  Future<void> _handleSongComplete() async {
+    switch (_playMode) {
+      case 0: // Repeat
+        await playNext();
+        break;
+      case 1: // Repeat one
+        await _player.seek(Duration.zero);
+        await _player.play();
+        break;
+      case 2: // Shuffle
+        await _playRandom();
+        break;
+      case 3: // AI (for now, just shuffle — future: similarity-based)
+        await _playRandom();
+        break;
+    }
+  }
+
+  Future<void> _playRandom() async {
+    if (_queue.isEmpty) return;
+    final idx = DateTime.now().millisecondsSinceEpoch % _queue.length;
+    _currentIndex = idx;
+    await playSong(_queue[_currentIndex], playlist: _queue, index: _currentIndex);
+  }
+
+  // ── Utility ───────────────────────────────────────────
+
+  /// Format duration
+  static String formatDuration(Duration d) {
+    final m = d.inMinutes.remainder(60).toString().padLeft(2, '0');
+    final s = d.inSeconds.remainder(60).toString().padLeft(2, '0');
+    return '$m:$s';
+  }
+
   @override
   void dispose() {
     _player.dispose();

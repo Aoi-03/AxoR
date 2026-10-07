@@ -1,17 +1,50 @@
+import 'dart:io' show Platform;
+import 'package:flutter/foundation.dart' show kIsWeb;
+import 'package:http/http.dart' as http;
+
 /// API Configuration
 /// Backend connection settings
 class ApiConfig {
-  // For Android Emulator (AVD)
-  // static const String baseUrl = 'http://10.0.2.2:3001';
-  
-  // For Real Device via USB (adb reverse)
-  // static const String baseUrl = 'http://localhost:3001';
-  
-  // For Real Device - WiFi Connection (Same Network)
-  // static const String baseUrl = 'http://192.168.0.103:3001';
-  
-  // For Render Deployment (Works from anywhere!)
-  static const String baseUrl = 'https://axor.onrender.com';
+  static String? _cachedBaseUrl;
+
+  static void setBaseUrl(String url) {
+    _cachedBaseUrl = url;
+  }
+
+  // Dynamically selects backend:
+  // - Real phone via USB adb reverse: 127.0.0.1:3000
+  // - Real phone via Wi-Fi: 10.244.5.162:3000
+  // - Android emulator: 10.0.2.2:3000
+  // - Desktop, Web: localhost:3000
+  static String get baseUrl {
+    if (_cachedBaseUrl != null) return _cachedBaseUrl!;
+    if (kIsWeb) return 'http://localhost:3000';
+    try {
+      if (Platform.isAndroid) return 'http://10.0.2.2:3000';
+    } catch (_) {}
+    return 'http://localhost:3000';
+  }
+
+  /// Automatically pings candidates to find the active backend host
+  static Future<String> detectWorkingBaseUrl() async {
+    final candidateHosts = [
+      'http://127.0.0.1:3000',
+      'http://10.244.5.162:3000',
+      'http://10.0.2.2:3000',
+      'http://localhost:3000',
+    ];
+
+    for (final host in candidateHosts) {
+      try {
+        final res = await http.get(Uri.parse('$host/health')).timeout(const Duration(milliseconds: 1200));
+        if (res.statusCode == 200) {
+          _cachedBaseUrl = host;
+          return host;
+        }
+      } catch (_) {}
+    }
+    return baseUrl;
+  }
   
   // API Endpoints
   static const String health = '/health';

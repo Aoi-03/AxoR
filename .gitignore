@@ -11,6 +11,8 @@ axor_app/.flutter-plugins
 axor_app/.flutter-plugins-dependencies
 axor_app/.packages
 axor_app/build/
+axor_app/android/build/
+axor_app/android/app/build/
 axor_app/android/.gradle/
 axor_app/android/local.properties
 axor_app/android/gradlew

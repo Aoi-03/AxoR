@@ -9,9 +9,10 @@ class ApiService {
   // Test backend connection
   static Future<bool> testConnection() async {
     try {
+      final host = await ApiConfig.detectWorkingBaseUrl();
       final response = await http.get(
-        Uri.parse('${ApiConfig.baseUrl}${ApiConfig.health}'),
-      ).timeout(const Duration(seconds: 5));
+        Uri.parse('$host${ApiConfig.health}'),
+      ).timeout(const Duration(seconds: 4));
       return response.statusCode == 200;
     } catch (e) {
       print('Connection error: $e');
@@ -22,6 +23,7 @@ class ApiService {
   // Get all songs
   static Future<List<Song>> getAllSongs() async {
     try {
+      await ApiConfig.detectWorkingBaseUrl();
       final response = await http.get(
         Uri.parse('${ApiConfig.baseUrl}${ApiConfig.songs}'),
       );

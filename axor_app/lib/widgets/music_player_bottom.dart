@@ -1,46 +1,11 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
-import '../constants/colors.dart';
-import '../utils/mode_manager.dart';
-import '../services/audio_player_service.dart';
+import '../../constants/colors.dart';
+import '../../services/audio_player_service.dart';
 import '../screens/player/full_player_screen.dart';
 
-class MusicPlayerBottom extends StatefulWidget {
-  final bool isOnModesTab;
-  
-  const MusicPlayerBottom({
-    super.key,
-    this.isOnModesTab = false,
-  });
-
-  @override
-  State<MusicPlayerBottom> createState() => _MusicPlayerBottomState();
-}
-
-class _MusicPlayerBottomState extends State<MusicPlayerBottom> with SingleTickerProviderStateMixin {
-  late AnimationController _scrollController;
-
-  @override
-  void initState() {
-    super.initState();
-    modeManager.addListener(_onModeChanged);
-    
-    _scrollController = AnimationController(
-      duration: const Duration(seconds: 8),
-      vsync: this,
-    )..repeat();
-  }
-
-  @override
-  void dispose() {
-    modeManager.removeListener(_onModeChanged);
-    _scrollController.dispose();
-    super.dispose();
-  }
-
-  void _onModeChanged() {
-    if (mounted) setState(() {});
-  }
+class MusicPlayerBottom extends StatelessWidget {
+  const MusicPlayerBottom({super.key});
 
   IconData _getShuffleRepeatIcon(int state) {
     switch (state) {
@@ -53,36 +18,41 @@ class _MusicPlayerBottomState extends State<MusicPlayerBottom> with SingleTicker
   }
 
   Color _getShuffleRepeatColor(int state) {
-    if (state == 0) return AppColors.lightGray;
-    return widget.isOnModesTab ? modeManager.getModeColor() : AppColors.cyan;
+    if (state == 0) return AppColors.textTertiary;
+    return AppColors.primary;
   }
 
   @override
   Widget build(BuildContext context) {
-    final modeColor = widget.isOnModesTab ? modeManager.getModeColor() : AppColors.cyan;
-    
     return Consumer<AudioPlayerService>(
       builder: (context, audioPlayer, child) {
         final currentSong = audioPlayer.currentSong;
+        if (currentSong == null) return const SizedBox.shrink(); // Hide if nothing is playing
+
         final isPlaying = audioPlayer.isPlaying;
         
         return GestureDetector(
           onTap: () {
-            if (currentSong != null) {
-              Navigator.push(
-                context,
-                MaterialPageRoute(builder: (context) => const FullPlayerScreen()),
-              );
-            }
+            Navigator.push(
+              context,
+              MaterialPageRoute(builder: (context) => const FullPlayerScreen()),
+            );
           },
           child: Container(
             height: 70,
             margin: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
             padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
             decoration: BoxDecoration(
-              color: AppColors.darkTeal,
+              color: AppColors.surfaceElevated.withAlpha(240),
               borderRadius: BorderRadius.circular(14),
-              border: Border.all(color: modeColor.withValues(alpha: 0.3), width: 1),
+              border: Border.all(color: AppColors.primary.withAlpha(50), width: 1),
+              boxShadow: [
+                BoxShadow(
+                  color: Colors.black.withAlpha(50),
+                  blurRadius: 10,
+                  offset: const Offset(0, -2),
+                ),
+              ]
             ),
             child: Row(
               children: [
@@ -91,139 +61,108 @@ class _MusicPlayerBottomState extends State<MusicPlayerBottom> with SingleTicker
                   width: 48,
                   height: 48,
                   decoration: BoxDecoration(
-                    color: AppColors.lightGray,
+                    color: AppColors.surfaceCard,
                     borderRadius: BorderRadius.circular(8),
                   ),
-                  child: currentSong != null && currentSong.hasEmbeddedCover
-                      ? ClipRRect(
-                          borderRadius: BorderRadius.circular(8),
-                          child: Image.network(
+                  child: ClipRRect(
+                    borderRadius: BorderRadius.circular(8),
+                    child: (currentSong.coverUrl.isNotEmpty) 
+                        ? Image.network(
                             currentSong.coverUrl,
                             fit: BoxFit.cover,
                             errorBuilder: (_, __, ___) => const Icon(
                               Icons.music_note,
-                              color: AppColors.darkGray,
+                              color: AppColors.textTertiary,
                               size: 24,
                             ),
-                          ),
-                        )
-                      : const Icon(Icons.music_note, color: AppColors.darkGray, size: 24),
+                          )
+                        : const Icon(Icons.music_note, color: AppColors.textTertiary, size: 24),
+                  ),
                 ),
-                const SizedBox(width: 8),
+                const SizedBox(width: 12),
                 
-                // Song Title - Simple with ellipsis (no scrolling to avoid overflow)
-                Flexible(
-                  child: Text(
-                    currentSong?.title ?? 'No song playing',
-                    style: const TextStyle(
-                      color: Colors.white,
-                      fontSize: 13,
-                      fontWeight: FontWeight.w500,
-                    ),
-                    overflow: TextOverflow.ellipsis,
-                    maxLines: 1,
+                // Song Title & Artist
+                Expanded(
+                  child: Column(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        currentSong.displayTitle,
+                        style: const TextStyle(
+                          color: Colors.white,
+                          fontSize: 14,
+                          fontWeight: FontWeight.w600,
+                        ),
+                        overflow: TextOverflow.ellipsis,
+                        maxLines: 1,
+                      ),
+                      const SizedBox(height: 2),
+                      Text(
+                        currentSong.displayArtist,
+                        style: TextStyle(
+                          color: AppColors.textSecondary,
+                          fontSize: 12,
+                        ),
+                        overflow: TextOverflow.ellipsis,
+                        maxLines: 1,
+                      ),
+                    ],
                   ),
                 ),
                 
                 const SizedBox(width: 4),
                 
-                // Controls - Flexible layout
-                GestureDetector(
-                  onTap: () {},
-                  child: Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      // Previous
-                      SizedBox(
-                        width: 32,
-                        height: 32,
-                        child: IconButton(
-                          onPressed: currentSong != null ? () => audioPlayer.playPrevious() : null,
-                          icon: Icon(
-                            Icons.skip_previous,
-                            color: currentSong != null ? Colors.white : AppColors.darkGray,
-                            size: 22,
-                          ),
-                          padding: EdgeInsets.zero,
-                        ),
+                // Controls
+                Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    // Cycle Play Mode (Shuffle/Repeat/AI)
+                    IconButton(
+                      icon: Icon(
+                        _getShuffleRepeatIcon(audioPlayer.playMode),
+                        color: _getShuffleRepeatColor(audioPlayer.playMode),
+                        size: 20,
                       ),
-                      
-                      // Play/Pause
-                      Container(
-                        width: 40,
-                        height: 40,
-                        decoration: BoxDecoration(
-                          color: currentSong != null ? Colors.white : AppColors.darkGray,
-                          shape: BoxShape.circle,
-                        ),
-                        child: IconButton(
-                          onPressed: currentSong != null ? () => audioPlayer.togglePlayPause() : null,
-                          icon: Icon(
-                            isPlaying ? Icons.pause : Icons.play_arrow,
-                            color: Colors.black,
-                            size: 22,
-                          ),
-                          padding: EdgeInsets.zero,
-                        ),
+                      onPressed: () => audioPlayer.cyclePlayMode(),
+                      padding: EdgeInsets.zero,
+                      constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
+                    ),
+                    const SizedBox(width: 4),
+                    // Play/Pause
+                    Container(
+                      width: 40,
+                      height: 40,
+                      decoration: const BoxDecoration(
+                        color: AppColors.primary,
+                        shape: BoxShape.circle,
                       ),
-                      
-                      // Next
-                      SizedBox(
-                        width: 32,
-                        height: 32,
-                        child: IconButton(
-                          onPressed: currentSong != null ? () => audioPlayer.playNext() : null,
-                          icon: Icon(
-                            Icons.skip_next,
-                            color: currentSong != null ? Colors.white : AppColors.darkGray,
-                            size: 22,
-                          ),
-                          padding: EdgeInsets.zero,
+                      child: IconButton(
+                        onPressed: () => audioPlayer.togglePlayPause(),
+                        icon: Icon(
+                          isPlaying ? Icons.pause_rounded : Icons.play_arrow_rounded,
+                          color: Colors.black,
+                          size: 24,
                         ),
+                        padding: EdgeInsets.zero,
                       ),
-                      
-                      // Shuffle/Repeat/AI
-                      SizedBox(
-                        width: 32,
-                        height: 32,
-                        child: IconButton(
-                          onPressed: () {
-                            final newState = (audioPlayer.shuffleRepeatState + 1) % 4;
-                            audioPlayer.setShuffleRepeatState(newState);
-                          },
-                          icon: Icon(
-                            _getShuffleRepeatIcon(audioPlayer.shuffleRepeatState),
-                            color: _getShuffleRepeatColor(audioPlayer.shuffleRepeatState),
-                            size: 20,
-                          ),
-                          padding: EdgeInsets.zero,
+                    ),
+                    const SizedBox(width: 4),
+                    // Next
+                    SizedBox(
+                      width: 32,
+                      height: 32,
+                      child: IconButton(
+                        onPressed: () => audioPlayer.playNext(),
+                        icon: const Icon(
+                          Icons.skip_next_rounded,
+                          color: Colors.white,
+                          size: 24,
                         ),
+                        padding: EdgeInsets.zero,
                       ),
-                      
-                      // Like/Heart - Always filled (cyan) since all songs are in cloud
-                      SizedBox(
-                        width: 32,
-                        height: 32,
-                        child: IconButton(
-                          onPressed: currentSong != null ? () {
-                            // TODO: Backend - Remove from cloud
-                            ScaffoldMessenger.of(context).showSnackBar(
-                              const SnackBar(
-                                content: Text('Song removed from cloud'),
-                                duration: Duration(seconds: 1),
-                              ),
-                            );
-                          } : null,
-                          icon: const Icon(
-                            Icons.favorite, // Always filled
-                            color: AppColors.cyan,
-                            size: 20,
-                          ),
-                          padding: EdgeInsets.zero,
-                        ),
-                      ),
-                    ],
-                  ),
+                    ),
+                  ],
                 ),
               ],
             ),

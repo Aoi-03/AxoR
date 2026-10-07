@@ -21,7 +21,7 @@ app.use(express.json());
 const STORAGE_MODE = process.env.STORAGE_MODE || 'local';
 
 // Music library path - YOUR ACTUAL MUSIC FOLDER (for local mode)
-const MUSIC_LIBRARY_PATH = process.env.MUSIC_LIBRARY_PATH || 'C:\\Users\\LUNA\\Downloads\\AI';
+const MUSIC_LIBRARY_PATH = process.env.MUSIC_LIBRARY_PATH || 'D:\\Downloads\\Liked_Songs';
 
 // MEGA configuration (for mega mode)
 const MEGA_PUBLIC_FOLDER_URL = process.env.MEGA_PUBLIC_FOLDER_URL || 'https://mega.nz/folder/X3BR2aZR#09OOI5s-5vtw0BBomoHphw';
@@ -288,7 +288,20 @@ async function extractAndCacheCover(songId, fileBuffer) {
       return coverCachePath;
     }
     
-    // Look for JPEG in file
+    // First try music-metadata buffer parsing
+    try {
+      const metadata = await mm.parseBuffer(fileBuffer);
+      if (metadata && metadata.common && metadata.common.picture && metadata.common.picture.length > 0) {
+        const pic = metadata.common.picture[0];
+        fs.writeFileSync(coverCachePath, pic.data);
+        console.log(`🖼️  Cached cover for song ${songId} (from metadata)`);
+        return coverCachePath;
+      }
+    } catch (parseErr) {
+      // Fall through to manual byte scanning
+    }
+    
+    // Fallback: Look for JPEG in file
     let imageStart = -1;
     let imageEnd = -1;
     
@@ -640,7 +653,7 @@ function estimateMoodFromGenres(genres) {
   return { mood, energy };
 }
 
-// Helper: Scan FLAC files and extract metadata
+// Helper: Scan audio files (MP3, FLAC, M4A, etc.) and extract metadata & covers
 async function scanMusicLibrary() {
   console.log('🔍 Scanning music library:', MUSIC_LIBRARY_PATH);
   
@@ -651,63 +664,107 @@ async function scanMusicLibrary() {
   
   const songs = [];
   const files = fs.readdirSync(MUSIC_LIBRARY_PATH);
+  const audioExtensions = ['.mp3', '.flac', '.m4a', '.wav', '.ogg', '.aac', '.wma', '.opus'];
   let successCount = 0;
   let errorCount = 0;
   
   for (const file of files) {
-    if (file.endsWith('.flac')) {
+    const ext = path.extname(file).toLowerCase();
+    if (audioExtensions.includes(ext)) {
       try {
         const filePath = path.join(MUSIC_LIBRARY_PATH, file);
         const fileStats = fs.statSync(filePath);
-        
-        // Try to parse metadata, but continue even if it fails
+        const baseName = path.basename(file, ext);
+        const songId = `song_${baseName.replace(/[^a-zA-Z0-9]/g, '_').substring(0, 50)}`;
+
+        // Check if cached metadata exists
+        let cached = metadataCache[file];
         let metadata = null;
-        try {
-          metadata = await mm.parseFile(filePath, { duration: true, skipCovers: false });
-        } catch (metaError) {
-          console.log(`⚠️  Could not read metadata for ${file}, using filename`);
+
+        if (!cached) {
+          try {
+            metadata = await mm.parseFile(filePath, { duration: true });
+          } catch (metaError) {
+            console.log(`⚠️  Could not read metadata for ${file}, using filename fallback`);
+          }
         }
-        
-        // Extract metadata from FLAC (or use filename if metadata fails)
-        const common = metadata ? metadata.common : {};
-        const format = metadata ? metadata.format : {};
-        
-        // Generate song ID from filename
-        const songId = `song_${file.replace('.flac', '').replace(/[^a-zA-Z0-9]/g, '_').substring(0, 50)}`;
-        
-        // Use filename as title if no metadata
-        const title = common.title || file.replace('.flac', '');
-        const artist = common.artist || 'Unknown Artist';
-        
+
+        const common = metadata ? metadata.common : (cached ? cached.common : {});
+        const format = metadata ? metadata.format : (cached ? cached.format : {});
+
+        // Cache cover if available
+        if (metadata && metadata.common && metadata.common.picture && metadata.common.picture.length > 0) {
+          try {
+            const coverCachePath = path.join(MEGA_CACHE_COVERS_DIR, `${songId}.jpg`);
+            if (!fs.existsSync(coverCachePath)) {
+              fs.writeFileSync(coverCachePath, metadata.common.picture[0].data);
+            }
+          } catch (coverErr) {
+            // Ignore cover write failure
+          }
+        }
+
+        // Clean artist & title
+        let title = common.title || '';
+        let artist = common.artist || '';
+
+        // If artist or title is empty or "Unknown Artist", parse from "Artist - Title" format
+        if (!title || !artist || artist === 'Unknown Artist') {
+          if (baseName.includes(' - ')) {
+            const parts = baseName.split(' - ');
+            if (!artist || artist === 'Unknown Artist') artist = parts[0].trim();
+            if (!title) title = parts.slice(1).join(' - ').trim();
+          } else {
+            if (!title) title = baseName.trim();
+            if (!artist) artist = 'Unknown Artist';
+          }
+        }
+
         // Estimate BPM and energy
         const bpm = estimateBPM(title);
         const energy = estimateEnergy(common.genre ? common.genre[0] : '');
         const mood = estimateMood(energy);
-        
+
         const song = {
           id: songId,
           title: title,
           artist: artist,
-          album: common.album || 'Unknown Album',
+          album: common.album || 'AxoR Library',
           duration: Math.round(format.duration || 0),
           bpm: bpm,
           energy: energy,
           mood: mood,
-          genre: common.genre ? common.genre[0] : 'Unknown',
+          genre: (common.genre && common.genre[0]) ? common.genre[0] : 'Music',
           filePath: `/songs/${encodeURIComponent(file)}`,
-          coverPath: 'embedded', // Assume all FLAC files have embedded covers
+          coverPath: 'embedded',
           fileSize: fileStats.size,
-          format: 'FLAC',
+          format: ext.replace('.', '').toUpperCase(),
           sampleRate: format.sampleRate || 44100,
-          bitrate: format.bitrate || 1411,
+          bitrate: format.bitrate ? Math.round(format.bitrate / 1000) : 320,
           year: common.year || null,
           fileName: file
         };
-        
+
+        // Save to cache
+        metadataCache[file] = {
+          common: {
+            title: song.title,
+            artist: song.artist,
+            album: song.album,
+            genre: [song.genre],
+            year: song.year
+          },
+          format: {
+            duration: song.duration,
+            sampleRate: song.sampleRate,
+            bitrate: song.bitrate
+          }
+        };
+
         songs.push(song);
         successCount++;
-        if (successCount <= 10) {
-          console.log(`✅ ${successCount}. ${song.title} - ${song.artist}`);
+        if (successCount <= 5 || successCount % 50 === 0) {
+          console.log(`✅ [${successCount}] ${song.title} - ${song.artist} (${song.format})`);
         }
       } catch (error) {
         errorCount++;
@@ -717,13 +774,21 @@ async function scanMusicLibrary() {
       }
     }
   }
-  
+
+  // Save metadata cache to disk
+  try {
+    fs.writeFileSync(METADATA_CACHE_FILE, JSON.stringify(metadataCache, null, 2));
+    console.log(`💾 Saved metadata cache to ${METADATA_CACHE_FILE}`);
+  } catch (err) {
+    console.error('Error writing metadata cache:', err.message);
+  }
+
   console.log(`\n🎵 Scan complete!`);
   console.log(`✅ Successfully scanned: ${successCount} songs`);
   if (errorCount > 0) {
     console.log(`⚠️  Errors: ${errorCount} files`);
   }
-  
+
   return songs;
 }
 
