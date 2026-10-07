@@ -3,9 +3,7 @@ package com.example.axor_app
 import android.app.WallpaperManager
 import android.content.Intent
 import android.graphics.BitmapFactory
-import android.net.Uri
 import android.os.Build
-import android.provider.Settings
 import io.flutter.embedding.android.FlutterActivity
 import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.plugin.common.MethodChannel
@@ -35,25 +33,13 @@ class MainActivity : FlutterActivity() {
         channel.setMethodCallHandler { call, result ->
             when (call.method) {
                 "checkPermission" -> {
-                    result.success(Settings.canDrawOverlays(this))
+                    // Native MediaSession & Honor Magic Capsule require no overlay permissions!
+                    result.success(true)
                 }
                 "requestPermission" -> {
-                    if (!Settings.canDrawOverlays(this)) {
-                        val intent = Intent(
-                            Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
-                            Uri.parse("package:$packageName")
-                        ).apply {
-                            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-                        }
-                        startActivity(intent)
-                    }
-                    result.success(Settings.canDrawOverlays(this))
+                    result.success(true)
                 }
                 "showIsland" -> {
-                    if (!Settings.canDrawOverlays(this)) {
-                        result.success(false)
-                        return@setMethodCallHandler
-                    }
                     val title = call.argument<String>("title") ?: "AXOR"
                     val artist = call.argument<String>("artist") ?: "Music"
                     val isPlaying = call.argument<Boolean>("isPlaying") ?: true
@@ -82,10 +68,6 @@ class MainActivity : FlutterActivity() {
                     result.success(true)
                 }
                 "updateIsland" -> {
-                    if (!Settings.canDrawOverlays(this)) {
-                        result.success(false)
-                        return@setMethodCallHandler
-                    }
                     val title = call.argument<String>("title")
                     val artist = call.argument<String>("artist")
                     val isPlaying = call.argument<Boolean>("isPlaying") ?: true

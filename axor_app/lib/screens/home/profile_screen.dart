@@ -189,36 +189,16 @@ class ProfileScreen extends StatelessWidget {
                 const Divider(color: AppColors.surfaceBorder, height: 1),
                 ListTile(
                   leading: const Icon(Icons.blur_circular_rounded, color: AppColors.cyan),
-                  title: const Text('Dynamic Island (Camera Capsule)', style: TextStyle(color: Colors.white, fontSize: 14)),
-                  subtitle: const Text('Floating music pill around selfie punch-hole', style: TextStyle(color: AppColors.textTertiary, fontSize: 12)),
+                  title: const Text('Magic Capsule & Media Island', style: TextStyle(color: Colors.white, fontSize: 14)),
+                  subtitle: const Text('Honor Magic Capsule, Lock Screen & AOD controls', style: TextStyle(color: AppColors.textTertiary, fontSize: 12)),
                   trailing: Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
                     decoration: BoxDecoration(
+                      color: AppColors.cyan.withAlpha(25),
                       border: Border.all(color: AppColors.cyan.withAlpha(120)),
                       borderRadius: BorderRadius.circular(8),
                     ),
-                    child: TextButton(
-                      style: TextButton.styleFrom(
-                        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
-                        minimumSize: Size.zero,
-                        tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                      ),
-                      onPressed: () async {
-                        final hasPerm = await DynamicIslandService.hasPermission();
-                        if (!hasPerm) {
-                          await DynamicIslandService.requestPermission();
-                        } else {
-                          if (context.mounted) {
-                            ScaffoldMessenger.of(context).showSnackBar(
-                              const SnackBar(
-                                content: Text('✨ Dynamic Island overlay permission is Active!'),
-                                backgroundColor: AppColors.primary,
-                              ),
-                            );
-                          }
-                        }
-                      },
-                      child: const Text('ENABLE', style: TextStyle(color: AppColors.cyan, fontWeight: FontWeight.bold, fontSize: 11)),
-                    ),
+                    child: const Text('NATIVE ACTIVE', style: TextStyle(color: AppColors.cyan, fontWeight: FontWeight.bold, fontSize: 10)),
                   ),
                 ),
                 const Divider(color: AppColors.surfaceBorder, height: 1),
