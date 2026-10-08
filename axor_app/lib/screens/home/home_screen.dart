@@ -9,6 +9,7 @@ import '../smart_modes/study_mode_screen.dart';
 import '../smart_modes/drive_mode_screen.dart';
 import '../../widgets/glass_card.dart';
 import '../../widgets/song_tile.dart';
+import '../../widgets/axor_image.dart';
 
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
@@ -299,15 +300,11 @@ class _HomeScreenState extends State<HomeScreen> {
                                           width: isCurrent ? 2 : 1,
                                         ),
                                       ),
-                                      child: ClipRRect(
+                                      child: AxorImage(
+                                        imageUrl: song.coverUrl,
+                                        width: 130,
+                                        height: 120,
                                         borderRadius: BorderRadius.circular(11),
-                                        child: Image.network(
-                                          song.coverUrl,
-                                          fit: BoxFit.cover,
-                                          errorBuilder: (_, __, ___) => const Center(
-                                            child: Icon(Icons.music_note, color: AppColors.primary, size: 36),
-                                          ),
-                                        ),
                                       ),
                                     ),
                                     Positioned(

@@ -3,6 +3,7 @@ import 'package:provider/provider.dart';
 import '../../constants/colors.dart';
 import '../../services/audio_player_service.dart';
 import '../screens/player/full_player_screen.dart';
+import 'axor_image.dart';
 
 class MusicPlayerBottom extends StatelessWidget {
   const MusicPlayerBottom({super.key});
@@ -57,27 +58,11 @@ class MusicPlayerBottom extends StatelessWidget {
             child: Row(
               children: [
                 // Album Art
-                Container(
+                AxorImage(
+                  imageUrl: currentSong.coverUrl,
                   width: 48,
                   height: 48,
-                  decoration: BoxDecoration(
-                    color: AppColors.surfaceCard,
-                    borderRadius: BorderRadius.circular(8),
-                  ),
-                  child: ClipRRect(
-                    borderRadius: BorderRadius.circular(8),
-                    child: (currentSong.coverUrl.isNotEmpty) 
-                        ? Image.network(
-                            currentSong.coverUrl,
-                            fit: BoxFit.cover,
-                            errorBuilder: (_, __, ___) => const Icon(
-                              Icons.music_note,
-                              color: AppColors.textTertiary,
-                              size: 24,
-                            ),
-                          )
-                        : const Icon(Icons.music_note, color: AppColors.textTertiary, size: 24),
-                  ),
+                  borderRadius: BorderRadius.circular(8),
                 ),
                 const SizedBox(width: 12),
                 

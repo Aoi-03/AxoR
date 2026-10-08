@@ -219,6 +219,9 @@ class DynamicIslandService : Service() {
                 PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
             )
 
+            // Honor Magic Capsule requires session activity binding
+            session.setSessionActivity(openAppIntent)
+
             val prevIntent = PendingIntent.getService(
                 this,
                 1,
@@ -254,6 +257,7 @@ class DynamicIslandService : Service() {
                 .setContentText(currentArtist)
                 .setSmallIcon(android.R.drawable.ic_media_play)
                 .setContentIntent(openAppIntent)
+                .setCategory(Notification.CATEGORY_TRANSPORT)
                 .setVisibility(Notification.VISIBILITY_PUBLIC)
                 .setOngoing(isPlaying)
                 .addAction(
@@ -307,13 +311,33 @@ class DynamicIslandService : Service() {
     private fun loadCoverBitmap(urlStr: String) {
         Thread {
             try {
-                val url = URL(urlStr)
-                val conn = url.openConnection()
-                conn.connectTimeout = 4000
-                conn.readTimeout = 4000
-                val bmp = BitmapFactory.decodeStream(conn.getInputStream())
-                if (bmp != null) {
-                    currentArtworkBitmap = bmp
+                val rawBitmap: Bitmap? = if (urlStr.startsWith("http://") || urlStr.startsWith("https://")) {
+                    val url = URL(urlStr)
+                    val conn = url.openConnection()
+                    conn.connectTimeout = 4000
+                    conn.readTimeout = 4000
+                    BitmapFactory.decodeStream(conn.getInputStream())
+                } else {
+                    val filePath = if (urlStr.startsWith("file://")) urlStr.substring(7) else urlStr
+                    val file = java.io.File(filePath)
+                    if (file.exists()) {
+                        BitmapFactory.decodeFile(file.absolutePath)
+                    } else null
+                }
+
+                if (rawBitmap != null) {
+                    // RAM & Battery Optimization: Downscale bitmap to max 256x256 for notification & capsule
+                    val maxDim = 256
+                    val scaledBitmap = if (rawBitmap.width > maxDim || rawBitmap.height > maxDim) {
+                        val aspect = rawBitmap.width.toFloat() / rawBitmap.height.toFloat()
+                        val targetWidth = if (aspect >= 1.0f) maxDim else (maxDim * aspect).toInt().coerceAtLeast(1)
+                        val targetHeight = if (aspect >= 1.0f) (maxDim / aspect).toInt().coerceAtLeast(1) else maxDim
+                        Bitmap.createScaledBitmap(rawBitmap, targetWidth, targetHeight, true)
+                    } else {
+                        rawBitmap
+                    }
+
+                    currentArtworkBitmap = scaledBitmap
                     mainHandler.post {
                         updateMediaSession()
                         postMediaNotification(isForeground = false)

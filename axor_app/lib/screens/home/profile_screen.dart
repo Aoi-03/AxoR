@@ -7,6 +7,7 @@ import '../../providers/music_provider.dart';
 import '../../services/dynamic_island_service.dart';
 import '../../services/audio_player_service.dart';
 import '../../widgets/glass_card.dart';
+import '../../widgets/library_stats_card.dart';
 
 class ProfileScreen extends StatelessWidget {
   const ProfileScreen({super.key});
@@ -117,36 +118,7 @@ class ProfileScreen extends StatelessWidget {
           ),
           const SizedBox(height: 10),
 
-          Row(
-            children: [
-              Expanded(
-                child: _buildStatTile(
-                  icon: Icons.music_note_rounded,
-                  value: '${music.allSongs.length}',
-                  label: 'Total Songs',
-                  color: AppColors.cyan,
-                ),
-              ),
-              const SizedBox(width: 10),
-              Expanded(
-                child: _buildStatTile(
-                  icon: Icons.storage_rounded,
-                  value: '~1.3 GB',
-                  label: 'Storage Used',
-                  color: AppColors.secondary,
-                ),
-              ),
-              const SizedBox(width: 10),
-              Expanded(
-                child: _buildStatTile(
-                  icon: Icons.speed_rounded,
-                  value: '320k',
-                  label: 'Audio Bitrate',
-                  color: AppColors.green,
-                ),
-              ),
-            ],
-          ),
+          const LibraryStatsCard(),
 
           const SizedBox(height: 24),
 
@@ -210,7 +182,7 @@ class ProfileScreen extends StatelessWidget {
                     builder: (context, setState) {
                       return Switch(
                         value: DynamicIslandService.syncLockscreenWallpaper,
-                        activeColor: AppColors.primary,
+                        activeThumbColor: AppColors.primary,
                         onChanged: (val) {
                           setState(() {
                             DynamicIslandService.setSyncLockscreenWallpaper(val);
@@ -292,45 +264,6 @@ class ProfileScreen extends StatelessWidget {
                 ),
               ],
             ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildStatTile({
-    required IconData icon,
-    required String value,
-    required String label,
-    required Color color,
-  }) {
-    return Container(
-      padding: const EdgeInsets.symmetric(vertical: 14, horizontal: 10),
-      decoration: BoxDecoration(
-        color: AppColors.surfaceElevated,
-        borderRadius: BorderRadius.circular(14),
-        border: Border.all(color: color.withAlpha(40), width: 1),
-      ),
-      child: Column(
-        children: [
-          Icon(icon, color: color, size: 22),
-          const SizedBox(height: 6),
-          Text(
-            value,
-            style: const TextStyle(
-              color: Colors.white,
-              fontSize: 15,
-              fontWeight: FontWeight.bold,
-            ),
-          ),
-          const SizedBox(height: 2),
-          Text(
-            label,
-            style: const TextStyle(
-              color: AppColors.textTertiary,
-              fontSize: 10,
-            ),
-            textAlign: TextAlign.center,
           ),
         ],
       ),

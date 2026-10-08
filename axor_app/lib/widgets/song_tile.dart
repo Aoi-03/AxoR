@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import '../constants/colors.dart';
 import '../constants/text_styles.dart';
+import 'axor_image.dart';
 
 /// Premium song list tile with album art, metadata, and action buttons
 class SongTile extends StatelessWidget {
@@ -83,15 +84,11 @@ class SongTile extends StatelessWidget {
                         ]
                       : null,
                 ),
-                child: ClipRRect(
+                child: AxorImage(
+                  imageUrl: albumArtUrl,
+                  width: 48,
+                  height: 48,
                   borderRadius: BorderRadius.circular(10),
-                  child: albumArtUrl != null && albumArtUrl!.startsWith('http')
-                      ? Image.network(
-                          albumArtUrl!,
-                          fit: BoxFit.cover,
-                          errorBuilder: (_, __, ___) => _defaultArt(),
-                        )
-                      : _defaultArt(),
                 ),
               ),
               const SizedBox(width: 14),
@@ -153,19 +150,6 @@ class SongTile extends StatelessWidget {
                 ),
             ],
           ),
-        ),
-      ),
-    );
-  }
-
-  Widget _defaultArt() {
-    return Container(
-      color: AppColors.surfaceCard,
-      child: Center(
-        child: Icon(
-          Icons.music_note_rounded,
-          color: isCurrentSong ? AppColors.primary : AppColors.textTertiary,
-          size: 22,
         ),
       ),
     );

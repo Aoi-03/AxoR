@@ -38,14 +38,24 @@ class DynamicIslandService {
     });
   }
 
-  /// Check if media service is supported (Native MediaSession needs no special overlay permissions)
+  /// Check if notification permission is granted for media session
   static Future<bool> hasPermission() async {
-    return true;
+    try {
+      final res = await _channel.invokeMethod<bool>('checkPermission');
+      return res ?? true;
+    } catch (_) {
+      return true;
+    }
   }
 
-  /// Request permission (noop since native MediaStyle is built-in)
+  /// Request notification permission if needed
   static Future<bool> requestPermission() async {
-    return true;
+    try {
+      final res = await _channel.invokeMethod<bool>('requestPermission');
+      return res ?? true;
+    } catch (_) {
+      return true;
+    }
   }
 
   /// Show or update the Dynamic Island capsule

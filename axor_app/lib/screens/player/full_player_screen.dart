@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../../constants/colors.dart';
 import '../../services/audio_player_service.dart';
+import '../../widgets/axor_image.dart';
 
 class FullPlayerScreen extends StatelessWidget {
   const FullPlayerScreen({super.key});
@@ -58,33 +59,11 @@ class FullPlayerScreen extends StatelessWidget {
                       const SizedBox(height: 20),
 
                       // Album Art
-                      Container(
+                      AxorImage(
+                        imageUrl: currentSong?.coverUrl,
                         width: MediaQuery.of(context).size.width * 0.85,
                         height: MediaQuery.of(context).size.width * 0.85,
-                        decoration: BoxDecoration(
-                          color: AppColors.darkTeal,
-                          borderRadius: BorderRadius.circular(16),
-                        ),
-                        child: currentSong != null && currentSong.hasEmbeddedCover
-                            ? ClipRRect(
-                                borderRadius: BorderRadius.circular(16),
-                                child: Image.network(
-                                  currentSong.coverUrl,
-                                  fit: BoxFit.cover,
-                                  errorBuilder: (context, error, stackTrace) {
-                                    return const Icon(
-                                      Icons.music_note,
-                                      color: AppColors.cyan,
-                                      size: 100,
-                                    );
-                                  },
-                                ),
-                              )
-                            : const Icon(
-                                Icons.music_note,
-                                color: AppColors.cyan,
-                                size: 100,
-                              ),
+                        borderRadius: BorderRadius.circular(16),
                       ),
 
                       const SizedBox(height: 30),

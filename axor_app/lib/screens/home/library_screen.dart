@@ -5,8 +5,20 @@ import '../../constants/text_styles.dart';
 import '../../providers/drive_provider.dart';
 import '../../providers/music_provider.dart';
 import '../../services/audio_player_service.dart';
+import '../../services/connectivity_service.dart';
 import '../../services/download_service.dart';
+import '../../services/google_drive_service.dart';
+import '../../widgets/library_stats_card.dart';
 import '../../widgets/song_tile.dart';
+
+enum ArrangeOrder {
+  titleAsc,
+  titleDesc,
+  artistAsc,
+  durationDesc,
+  durationAsc,
+  recent,
+}
 
 class LibraryScreen extends StatefulWidget {
   const LibraryScreen({super.key});
@@ -18,6 +30,7 @@ class LibraryScreen extends StatefulWidget {
 class _LibraryScreenState extends State<LibraryScreen> {
   int _selectedTab = 0; // 0: Local Liked Songs, 1: Google Drive
   String _filterQuery = '';
+  ArrangeOrder _arrangeOrder = ArrangeOrder.titleAsc;
 
   @override
   void initState() {
@@ -35,8 +48,74 @@ class _LibraryScreenState extends State<LibraryScreen> {
     });
   }
 
+  String _getArrangeLabel(ArrangeOrder order) {
+    switch (order) {
+      case ArrangeOrder.titleAsc:
+        return 'Title (A - Z)';
+      case ArrangeOrder.titleDesc:
+        return 'Title (Z - A)';
+      case ArrangeOrder.artistAsc:
+        return 'Artist (A - Z)';
+      case ArrangeOrder.durationDesc:
+        return 'Duration (Longest)';
+      case ArrangeOrder.durationAsc:
+        return 'Duration (Shortest)';
+      case ArrangeOrder.recent:
+        return 'Recently Added';
+    }
+  }
+
+  List<DriveAudioFile> _sortDriveFiles(List<DriveAudioFile> files) {
+    final list = List<DriveAudioFile>.from(files);
+    switch (_arrangeOrder) {
+      case ArrangeOrder.titleAsc:
+        list.sort((a, b) => a.displayTitle.toLowerCase().compareTo(b.displayTitle.toLowerCase()));
+        break;
+      case ArrangeOrder.titleDesc:
+        list.sort((a, b) => b.displayTitle.toLowerCase().compareTo(a.displayTitle.toLowerCase()));
+        break;
+      case ArrangeOrder.artistAsc:
+        list.sort((a, b) => a.displayArtist.toLowerCase().compareTo(b.displayArtist.toLowerCase()));
+        break;
+      case ArrangeOrder.durationDesc:
+        list.sort((a, b) => (b.durationSeconds ?? 0).compareTo(a.durationSeconds ?? 0));
+        break;
+      case ArrangeOrder.durationAsc:
+        list.sort((a, b) => (a.durationSeconds ?? 0).compareTo(b.durationSeconds ?? 0));
+        break;
+      case ArrangeOrder.recent:
+        if (list.isNotEmpty && list.first.modifiedTime != null) {
+          list.sort((a, b) {
+            final ma = a.modifiedTime ?? DateTime(1970);
+            final mb = b.modifiedTime ?? DateTime(1970);
+            return mb.compareTo(ma);
+          });
+        }
+        break;
+    }
+    return list;
+  }
+
   @override
   Widget build(BuildContext context) {
+    final connectivity = Provider.of<ConnectivityService>(context);
+    final isOnline = connectivity.isOnline;
+
+    // Offline Fallback: If disconnected and on Google Drive tab, auto-switch to Local tab
+    if (!isOnline && _selectedTab == 1) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) {
+          setState(() => _selectedTab = 0);
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('Offline mode: Automatically defaulted to Local library'),
+              duration: Duration(seconds: 2),
+            ),
+          );
+        }
+      });
+    }
+
     return Scaffold(
       backgroundColor: Colors.transparent,
       appBar: AppBar(
@@ -59,9 +138,47 @@ class _LibraryScreenState extends State<LibraryScreen> {
       ),
       body: Column(
         children: [
+          // Alternating Library Statistics Banner (1-second cycle when online, local when offline)
+          const Padding(
+            padding: EdgeInsets.symmetric(horizontal: 16.0),
+            child: LibraryStatsCard(compact: true),
+          ),
+
+          // Offline Notice Banner
+          if (!isOnline)
+            Container(
+              margin: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 4.0),
+              padding: const EdgeInsets.symmetric(horizontal: 12.0, vertical: 8.0),
+              decoration: BoxDecoration(
+                color: AppColors.secondary.withAlpha(25),
+                borderRadius: BorderRadius.circular(10),
+                border: Border.all(color: AppColors.secondary.withAlpha(80)),
+              ),
+              child: Row(
+                children: [
+                  const Icon(Icons.cloud_off_rounded, color: AppColors.secondary, size: 16),
+                  const SizedBox(width: 8),
+                  const Expanded(
+                    child: Text(
+                      'Offline Mode Active — Defaulting to Local & Downloaded Tracks',
+                      style: TextStyle(color: Colors.white70, fontSize: 12, fontWeight: FontWeight.w600),
+                    ),
+                  ),
+                  Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                    decoration: BoxDecoration(
+                      color: AppColors.secondary.withAlpha(40),
+                      borderRadius: BorderRadius.circular(6),
+                    ),
+                    child: const Text('OFFLINE', style: TextStyle(color: AppColors.secondary, fontSize: 10, fontWeight: FontWeight.bold)),
+                  ),
+                ],
+              ),
+            ),
+
           // Tab Toggle: Local Library vs Google Drive
           Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 8.0),
+            padding: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 6.0),
             child: Container(
               height: 44,
               decoration: BoxDecoration(
@@ -82,9 +199,9 @@ class _LibraryScreenState extends State<LibraryScreen> {
                           borderRadius: BorderRadius.circular(11),
                         ),
                         child: Center(
-                          child: Consumer<MusicProvider>(
-                            builder: (context, music, _) {
-                              final count = music.allSongs.length;
+                          child: Consumer2<MusicProvider, DownloadService>(
+                            builder: (context, music, download, _) {
+                              final count = music.allSongs.length + download.downloadedSongs.length;
                               return Row(
                                 mainAxisAlignment: MainAxisAlignment.center,
                                 children: [
@@ -95,7 +212,7 @@ class _LibraryScreenState extends State<LibraryScreen> {
                                   ),
                                   const SizedBox(width: 8),
                                   Text(
-                                    'Liked Songs${count > 0 ? ' ($count)' : ''}',
+                                    'Local & Liked${count > 0 ? ' ($count)' : ''}',
                                     style: TextStyle(
                                       color: _selectedTab == 0 ? Colors.white : AppColors.textTertiary,
                                       fontWeight: _selectedTab == 0 ? FontWeight.bold : FontWeight.normal,
@@ -112,7 +229,19 @@ class _LibraryScreenState extends State<LibraryScreen> {
                   ),
                   Expanded(
                     child: GestureDetector(
-                      onTap: () => setState(() => _selectedTab = 1),
+                      onTap: () {
+                        if (!isOnline) {
+                          ScaffoldMessenger.of(context).showSnackBar(
+                            const SnackBar(
+                              content: Text('Cannot access Google Drive while offline. Playing local library.'),
+                              duration: Duration(seconds: 2),
+                            ),
+                          );
+                          setState(() => _selectedTab = 0);
+                        } else {
+                          setState(() => _selectedTab = 1);
+                        }
+                      },
                       child: Container(
                         decoration: BoxDecoration(
                           color: _selectedTab == 1
@@ -141,6 +270,11 @@ class _LibraryScreenState extends State<LibraryScreen> {
                                       fontSize: 13,
                                     ),
                                   ),
+                                  if (!isOnline)
+                                    Padding(
+                                      padding: const EdgeInsets.only(left: 4.0),
+                                      child: Icon(Icons.lock_outline_rounded, size: 12, color: AppColors.textTertiary),
+                                    ),
                                 ],
                               );
                             },
@@ -165,11 +299,11 @@ class _LibraryScreenState extends State<LibraryScreen> {
     );
   }
 
-  // ── Tab 0: Local Liked Songs ──────────────────────────────────
+  // ── Tab 0: Local Liked & Downloaded Songs ─────────────────────────
   Widget _buildLocalLikedSongsTab() {
-    return Consumer2<MusicProvider, AudioPlayerService>(
-      builder: (context, music, audioPlayer, _) {
-        if (music.isLoading && music.allSongs.isEmpty) {
+    return Consumer3<MusicProvider, AudioPlayerService, DownloadService>(
+      builder: (context, music, audioPlayer, downloadService, _) {
+        if (music.isLoading && music.allSongs.isEmpty && downloadService.downloadedSongs.isEmpty) {
           return const Center(
             child: Column(
               mainAxisAlignment: MainAxisAlignment.center,
@@ -182,7 +316,25 @@ class _LibraryScreenState extends State<LibraryScreen> {
           );
         }
 
-        if (music.allSongs.isEmpty) {
+        // Build unified local track list: Downloaded songs + Backend songs
+        final List<DriveAudioFile> allLocalFiles = [];
+        final Set<String> seenIds = {};
+
+        // Downloaded files first (100% available offline)
+        for (final d in downloadService.downloadedSongs) {
+          if (seenIds.add(d.id)) {
+            allLocalFiles.add(d);
+          }
+        }
+
+        // Backend songs
+        for (final s in music.allSongs) {
+          if (seenIds.add(s.id)) {
+            allLocalFiles.add(DriveAudioFile.fromSong(s));
+          }
+        }
+
+        if (allLocalFiles.isEmpty) {
           return Center(
             child: Column(
               mainAxisAlignment: MainAxisAlignment.center,
@@ -190,12 +342,12 @@ class _LibraryScreenState extends State<LibraryScreen> {
                 const Icon(Icons.music_off_rounded, color: AppColors.textTertiary, size: 54),
                 const SizedBox(height: 16),
                 const Text(
-                  'No songs found in your library',
+                  'No local or downloaded songs found',
                   style: TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.bold),
                 ),
                 const SizedBox(height: 8),
                 const Text(
-                  'Make sure your backend is running on port 3000',
+                  'Connect to Google Drive or download tracks to play offline',
                   style: TextStyle(color: AppColors.textSecondary, fontSize: 13),
                 ),
                 const SizedBox(height: 20),
@@ -213,11 +365,15 @@ class _LibraryScreenState extends State<LibraryScreen> {
           );
         }
 
-        final displayedSongs = _filterQuery.isEmpty
-            ? music.allSongs
-            : music.allSongs.where((s) =>
-                s.title.toLowerCase().contains(_filterQuery.toLowerCase()) ||
-                s.artist.toLowerCase().contains(_filterQuery.toLowerCase())).toList();
+        // Filter
+        var filtered = _filterQuery.isEmpty
+            ? allLocalFiles
+            : allLocalFiles.where((s) =>
+                s.displayTitle.toLowerCase().contains(_filterQuery.toLowerCase()) ||
+                s.displayArtist.toLowerCase().contains(_filterQuery.toLowerCase())).toList();
+
+        // Arrange Order
+        final displayedFiles = _sortDriveFiles(filtered);
 
         return RefreshIndicator(
           color: AppColors.primary,
@@ -239,7 +395,7 @@ class _LibraryScreenState extends State<LibraryScreen> {
                     style: const TextStyle(color: Colors.white, fontSize: 13),
                     onChanged: (val) => setState(() => _filterQuery = val),
                     decoration: InputDecoration(
-                      hintText: 'Filter in ${music.allSongs.length} songs...',
+                      hintText: 'Filter in ${allLocalFiles.length} local tracks...',
                       hintStyle: const TextStyle(color: AppColors.textTertiary, fontSize: 12),
                       prefixIcon: const Icon(Icons.search, size: 18, color: AppColors.primary),
                       suffixIcon: _filterQuery.isNotEmpty
@@ -255,40 +411,68 @@ class _LibraryScreenState extends State<LibraryScreen> {
                 ),
               ),
 
-              // Header bar: Shuffle Play & Count
+              // Header bar: Arrange Order + Shuffle Play
               Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 8.0),
+                padding: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 6.0),
                 child: Row(
                   children: [
-                    Text(
-                      '${displayedSongs.length} Tracks',
-                      style: const TextStyle(
-                        color: AppColors.textSecondary,
-                        fontSize: 14,
-                        fontWeight: FontWeight.w600,
+                    // Arrange Order Selector
+                    PopupMenuButton<ArrangeOrder>(
+                      initialValue: _arrangeOrder,
+                      onSelected: (order) => setState(() => _arrangeOrder = order),
+                      color: AppColors.surfaceElevated,
+                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+                        decoration: BoxDecoration(
+                          color: AppColors.surfaceElevated,
+                          borderRadius: BorderRadius.circular(20),
+                          border: Border.all(color: AppColors.primary.withAlpha(80), width: 1),
+                        ),
+                        child: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            const Icon(Icons.sort_rounded, color: AppColors.primary, size: 15),
+                            const SizedBox(width: 6),
+                            Text(
+                              _getArrangeLabel(_arrangeOrder),
+                              style: const TextStyle(color: Colors.white, fontSize: 12, fontWeight: FontWeight.w600),
+                            ),
+                            const Icon(Icons.arrow_drop_down, color: AppColors.primary, size: 16),
+                          ],
+                        ),
                       ),
+                      itemBuilder: (context) => [
+                        const PopupMenuItem(value: ArrangeOrder.titleAsc, child: Text('Title (A - Z)')),
+                        const PopupMenuItem(value: ArrangeOrder.titleDesc, child: Text('Title (Z - A)')),
+                        const PopupMenuItem(value: ArrangeOrder.artistAsc, child: Text('Artist (A - Z)')),
+                        const PopupMenuItem(value: ArrangeOrder.durationDesc, child: Text('Duration (Longest)')),
+                        const PopupMenuItem(value: ArrangeOrder.durationAsc, child: Text('Duration (Shortest)')),
+                        const PopupMenuItem(value: ArrangeOrder.recent, child: Text('Recently Added')),
+                      ],
                     ),
                     const Spacer(),
+                    // Shuffle Play
                     TextButton.icon(
                       onPressed: () {
-                        if (displayedSongs.isNotEmpty) {
+                        if (displayedFiles.isNotEmpty) {
                           audioPlayer.setPlayMode(2); // Shuffle mode
-                          audioPlayer.playAxorSong(
-                            displayedSongs[0],
-                            playlist: displayedSongs,
+                          audioPlayer.playSong(
+                            displayedFiles[0],
+                            playlist: displayedFiles,
                             index: 0,
                           );
                         }
                       },
-                      icon: const Icon(Icons.shuffle_rounded, color: AppColors.primary, size: 18),
+                      icon: const Icon(Icons.shuffle_rounded, color: AppColors.primary, size: 16),
                       label: const Text(
-                        'Shuffle Play',
-                        style: TextStyle(color: AppColors.primary, fontWeight: FontWeight.bold),
+                        'Shuffle',
+                        style: TextStyle(color: AppColors.primary, fontWeight: FontWeight.bold, fontSize: 12),
                       ),
                       style: TextButton.styleFrom(
                         backgroundColor: AppColors.primary.withAlpha(25),
                         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
-                        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 6),
+                        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
                       ),
                     ),
                   ],
@@ -299,44 +483,68 @@ class _LibraryScreenState extends State<LibraryScreen> {
               Expanded(
                 child: ListView.builder(
                   padding: const EdgeInsets.only(left: 16, right: 16, top: 4, bottom: 100),
-                  itemCount: displayedSongs.length,
+                  itemCount: displayedFiles.length,
                   itemBuilder: (context, index) {
-                    final song = displayedSongs[index];
-                    final isCurrentSong = audioPlayer.currentSong?.id == song.id;
+                    final file = displayedFiles[index];
+                    final isCurrentSong = audioPlayer.currentSong?.id == file.id;
                     final isPlaying = isCurrentSong && audioPlayer.isPlaying;
+                    final isLocalDownloaded = downloadService.isDownloaded(file.id);
 
                     return Padding(
                       padding: const EdgeInsets.only(bottom: 6.0),
                       child: SongTile(
                         index: index,
-                        title: song.title,
-                        artist: song.artist,
-                        duration: song.formattedDuration,
-                        albumArtUrl: song.coverUrl,
+                        title: file.displayTitle,
+                        artist: file.displayArtist,
+                        duration: file.formattedDuration,
+                        albumArtUrl: file.coverUrl.isNotEmpty ? file.coverUrl : file.thumbnailLink,
                         isCurrentSong: isCurrentSong,
                         isPlaying: isPlaying,
                         onTap: () {
-                          audioPlayer.playAxorSong(
-                            song,
-                            playlist: displayedSongs,
+                          audioPlayer.playSong(
+                            file,
+                            playlist: displayedFiles,
                             index: index,
                           );
                         },
-                        trailing: Container(
-                          padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-                          decoration: BoxDecoration(
-                            color: AppColors.surfaceElevated,
-                            borderRadius: BorderRadius.circular(4),
-                            border: Border.all(color: AppColors.primary.withAlpha(30)),
-                          ),
-                          child: Text(
-                            song.format,
-                            style: const TextStyle(
-                              color: AppColors.cyan,
-                              fontSize: 10,
-                              fontWeight: FontWeight.bold,
-                            ),
-                          ),
+                        trailing: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            if (isLocalDownloaded)
+                              Container(
+                                padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                                decoration: BoxDecoration(
+                                  color: AppColors.green.withAlpha(20),
+                                  borderRadius: BorderRadius.circular(4),
+                                  border: Border.all(color: AppColors.green.withAlpha(60)),
+                                ),
+                                child: const Row(
+                                  mainAxisSize: MainAxisSize.min,
+                                  children: [
+                                    Icon(Icons.download_done_rounded, color: AppColors.green, size: 12),
+                                    SizedBox(width: 4),
+                                    Text('LOCAL', style: TextStyle(color: AppColors.green, fontSize: 9, fontWeight: FontWeight.bold)),
+                                  ],
+                                ),
+                              )
+                            else
+                              Container(
+                                padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                                decoration: BoxDecoration(
+                                  color: AppColors.surfaceElevated,
+                                  borderRadius: BorderRadius.circular(4),
+                                  border: Border.all(color: AppColors.primary.withAlpha(30)),
+                                ),
+                                child: const Text(
+                                  '320k',
+                                  style: TextStyle(
+                                    color: AppColors.cyan,
+                                    fontSize: 10,
+                                    fontWeight: FontWeight.bold,
+                                  ),
+                                ),
+                              ),
+                          ],
                         ),
                       ),
                     );
@@ -402,67 +610,134 @@ class _LibraryScreenState extends State<LibraryScreen> {
           );
         }
 
+        final sortedDriveFiles = _sortDriveFiles(drive.audioFiles);
+
         return RefreshIndicator(
           color: AppColors.primary,
           backgroundColor: AppColors.surfaceCard,
           onRefresh: () => drive.refresh(),
-          child: ListView.builder(
-            padding: const EdgeInsets.only(left: 16, right: 16, top: 8, bottom: 100),
-            itemCount: drive.audioFiles.length,
-            itemBuilder: (context, index) {
-              final file = drive.audioFiles[index];
-
-              return Padding(
-                padding: const EdgeInsets.only(bottom: 8.0),
-                child: Consumer2<AudioPlayerService, DownloadService>(
-                  builder: (context, audioPlayer, downloadService, _) {
-                    final isCurrentSong = audioPlayer.currentSong?.id == file.id;
-                    final isPlaying = isCurrentSong && audioPlayer.isPlaying;
-                    final isDownloading = downloadService.isDownloading(file.id);
-
-                    return SongTile(
-                      index: index,
-                      title: file.displayTitle,
-                      artist: file.displayArtist,
-                      duration: file.formattedDuration,
-                      albumArtUrl: file.thumbnailLink,
-                      isCurrentSong: isCurrentSong,
-                      isPlaying: isPlaying,
-                      onTap: () {
-                        audioPlayer.playSong(
-                          file,
-                          playlist: drive.audioFiles,
-                          index: index,
-                        );
-                      },
-                      trailing: isDownloading
-                          ? const SizedBox(
-                              width: 24,
-                              height: 24,
-                              child: CircularProgressIndicator(
-                                color: AppColors.primary,
-                                strokeWidth: 2,
-                              ),
-                            )
-                          : IconButton(
-                              icon: const Icon(Icons.download_rounded, color: AppColors.primary),
-                              onPressed: () async {
-                                ScaffoldMessenger.of(context).showSnackBar(
-                                  SnackBar(content: Text('Downloading ${file.displayTitle}...')),
-                                );
-                                await downloadService.downloadSong(file);
-                                if (context.mounted) {
-                                  ScaffoldMessenger.of(context).showSnackBar(
-                                    SnackBar(content: Text('Downloaded ${file.displayTitle}')),
-                                  );
-                                }
-                              },
+          child: Column(
+            children: [
+              // Header bar: Arrange Order for Drive
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 6.0),
+                child: Row(
+                  children: [
+                    PopupMenuButton<ArrangeOrder>(
+                      initialValue: _arrangeOrder,
+                      onSelected: (order) => setState(() => _arrangeOrder = order),
+                      color: AppColors.surfaceElevated,
+                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+                        decoration: BoxDecoration(
+                          color: AppColors.surfaceElevated,
+                          borderRadius: BorderRadius.circular(20),
+                          border: Border.all(color: AppColors.primary.withAlpha(80), width: 1),
+                        ),
+                        child: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            const Icon(Icons.sort_rounded, color: AppColors.primary, size: 15),
+                            const SizedBox(width: 6),
+                            Text(
+                              _getArrangeLabel(_arrangeOrder),
+                              style: const TextStyle(color: Colors.white, fontSize: 12, fontWeight: FontWeight.w600),
                             ),
+                            const Icon(Icons.arrow_drop_down, color: AppColors.primary, size: 16),
+                          ],
+                        ),
+                      ),
+                      itemBuilder: (context) => [
+                        const PopupMenuItem(value: ArrangeOrder.titleAsc, child: Text('Title (A - Z)')),
+                        const PopupMenuItem(value: ArrangeOrder.titleDesc, child: Text('Title (Z - A)')),
+                        const PopupMenuItem(value: ArrangeOrder.artistAsc, child: Text('Artist (A - Z)')),
+                        const PopupMenuItem(value: ArrangeOrder.durationDesc, child: Text('Duration (Longest)')),
+                        const PopupMenuItem(value: ArrangeOrder.durationAsc, child: Text('Duration (Shortest)')),
+                        const PopupMenuItem(value: ArrangeOrder.recent, child: Text('Recently Added')),
+                      ],
+                    ),
+                    const Spacer(),
+                    Text(
+                      '${sortedDriveFiles.length} Tracks',
+                      style: const TextStyle(color: AppColors.textTertiary, fontSize: 12),
+                    ),
+                  ],
+                ),
+              ),
+
+              // Drive files list
+              Expanded(
+                child: ListView.builder(
+                  padding: const EdgeInsets.only(left: 16, right: 16, top: 4, bottom: 100),
+                  itemCount: sortedDriveFiles.length,
+                  itemBuilder: (context, index) {
+                    final file = sortedDriveFiles[index];
+
+                    return Padding(
+                      padding: const EdgeInsets.only(bottom: 8.0),
+                      child: Consumer2<AudioPlayerService, DownloadService>(
+                        builder: (context, audioPlayer, downloadService, _) {
+                          final isCurrentSong = audioPlayer.currentSong?.id == file.id;
+                          final isPlaying = isCurrentSong && audioPlayer.isPlaying;
+                          final isDownloading = downloadService.isDownloading(file.id);
+                          final isDownloaded = downloadService.isDownloaded(file.id);
+
+                          return SongTile(
+                            index: index,
+                            title: file.displayTitle,
+                            artist: file.displayArtist,
+                            duration: file.formattedDuration,
+                            albumArtUrl: file.coverUrl.isNotEmpty ? file.coverUrl : file.thumbnailLink,
+                            isCurrentSong: isCurrentSong,
+                            isPlaying: isPlaying,
+                            onTap: () {
+                              audioPlayer.playSong(
+                                file,
+                                playlist: sortedDriveFiles,
+                                index: index,
+                              );
+                            },
+                            trailing: isDownloading
+                                ? const SizedBox(
+                                    width: 24,
+                                    height: 24,
+                                    child: CircularProgressIndicator(
+                                      color: AppColors.primary,
+                                      strokeWidth: 2,
+                                    ),
+                                  )
+                                : isDownloaded
+                                    ? Container(
+                                        padding: const EdgeInsets.all(6),
+                                        decoration: BoxDecoration(
+                                          color: AppColors.green.withAlpha(20),
+                                          shape: BoxShape.circle,
+                                        ),
+                                        child: const Icon(Icons.download_done_rounded, color: AppColors.green, size: 18),
+                                      )
+                                    : IconButton(
+                                        icon: const Icon(Icons.download_rounded, color: AppColors.primary),
+                                        onPressed: () async {
+                                          ScaffoldMessenger.of(context).showSnackBar(
+                                            SnackBar(content: Text('Downloading ${file.displayTitle}...')),
+                                          );
+                                          await downloadService.downloadSong(file);
+                                          if (context.mounted) {
+                                            ScaffoldMessenger.of(context).showSnackBar(
+                                              SnackBar(content: Text('Downloaded ${file.displayTitle}')),
+                                            );
+                                          }
+                                        },
+                                      ),
+                          );
+                        },
+                      ),
                     );
                   },
                 ),
-              );
-            },
+              ),
+            ],
           ),
         );
       },

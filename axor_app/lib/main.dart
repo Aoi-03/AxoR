@@ -7,10 +7,15 @@ import 'providers/drive_provider.dart';
 import 'providers/music_provider.dart';
 import 'services/audio_player_service.dart';
 import 'services/download_service.dart';
+import 'services/connectivity_service.dart';
 import 'screens/splash_screen.dart';
 
 void main() {
   WidgetsFlutterBinding.ensureInitialized();
+
+  // Memory & RAM optimization: Cap Flutter image cache to 40MB max
+  PaintingBinding.instance.imageCache.maximumSizeBytes = 40 * 1024 * 1024;
+  PaintingBinding.instance.imageCache.maximumSize = 100;
 
   // Set system UI overlay style for immersive dark theme
   SystemChrome.setSystemUIOverlayStyle(const SystemUiOverlayStyle(
@@ -35,6 +40,7 @@ class AxorApp extends StatelessWidget {
         ChangeNotifierProvider(create: (_) => MusicProvider()),
         ChangeNotifierProvider(create: (_) => AudioPlayerService()),
         ChangeNotifierProvider(create: (_) => DownloadService()),
+        ChangeNotifierProvider(create: (_) => ConnectivityService()),
       ],
       child: MaterialApp(
         title: 'AXOR',

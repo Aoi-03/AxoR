@@ -1,7 +1,10 @@
+import 'dart:io';
 import 'package:flutter/foundation.dart';
 import 'package:just_audio/just_audio.dart';
 import '../services/google_drive_service.dart';
 import '../services/dynamic_island_service.dart';
+import '../services/download_service.dart';
+import '../services/connectivity_service.dart';
 import '../models/song.dart';
 
 /// Audio Player Service — AXOR 2.0
@@ -87,51 +90,83 @@ class AudioPlayerService with ChangeNotifier {
 
   // ── Playback Controls ─────────────────────────────────
 
-  /// Play a song from Drive
+  /// Play a song from Drive or Local storage with offline fallback
   Future<void> playSong(
     DriveAudioFile song, {
     List<DriveAudioFile>? playlist,
     int? index,
   }) async {
     try {
-      _currentSong = song;
+      var activeSong = song;
+
+      // ── Offline Fallback Check ──
+      final isOnline = ConnectivityService().isOnline;
+      final isRemoteDrive = activeSong.streamUrl.contains('googleapis.com');
+
+      if (!isOnline && isRemoteDrive) {
+        // Find if downloaded locally
+        final downloadedMatch = DownloadService().downloadedSongs.where(
+          (d) => d.id == song.id || d.displayTitle.toLowerCase() == song.displayTitle.toLowerCase(),
+        ).firstOrNull;
+
+        if (downloadedMatch != null) {
+          activeSong = downloadedMatch;
+          if (kDebugMode) print('🔄 Offline fallback: Playing downloaded copy for ${song.displayTitle}');
+        } else if (DownloadService().downloadedSongs.isNotEmpty) {
+          activeSong = DownloadService().downloadedSongs.first;
+          if (kDebugMode) print('🔄 Offline fallback: Song not downloaded, playing local library: ${activeSong.displayTitle}');
+        }
+      }
+
+      _currentSong = activeSong;
       if (playlist != null) {
         _queue = playlist;
         _currentIndex = index ?? 0;
       }
 
       if (kDebugMode) {
-        print('🎵 Playing: ${song.displayTitle} — ${song.displayArtist}');
+        print('🎵 Playing: ${activeSong.displayTitle} — ${activeSong.displayArtist}');
       }
 
       await _player.stop();
 
-      // Get auth headers only if streaming from Google Drive
-      final isDrive = song.streamUrl.contains('googleapis.com');
-      final headers = isDrive ? await _driveService.getAuthHeaders() : null;
+      // Check if local file path
+      final isLocalFile = activeSong.customStreamUrl != null &&
+          File(activeSong.customStreamUrl!).existsSync();
 
-      // Stream audio source
-      await _player
-          .setAudioSource(
-            AudioSource.uri(
-              Uri.parse(song.streamUrl),
-              headers: headers,
-            ),
-          )
-          .timeout(
-            const Duration(seconds: 30),
-            onTimeout: () => throw Exception('Stream timeout'),
-          );
+      if (isLocalFile) {
+        // Zero-latency direct local file playback
+        await _player.setAudioSource(
+          AudioSource.file(activeSong.customStreamUrl!),
+        );
+      } else {
+        // Get auth headers only if streaming from Google Drive
+        final isDrive = activeSong.streamUrl.contains('googleapis.com');
+        final headers = isDrive ? await _driveService.getAuthHeaders() : null;
+
+        // Stream audio source
+        await _player
+            .setAudioSource(
+              AudioSource.uri(
+                Uri.parse(activeSong.streamUrl),
+                headers: headers,
+              ),
+            )
+            .timeout(
+              const Duration(seconds: 30),
+              onTimeout: () => throw Exception('Stream timeout'),
+            );
+      }
 
       await _player.play();
 
       DynamicIslandService.show(
-        title: song.displayTitle,
-        artist: song.displayArtist,
+        title: activeSong.displayTitle,
+        artist: activeSong.displayArtist,
         isPlaying: true,
-        coverUrl: song.coverArtUrl,
+        coverUrl: activeSong.coverArtUrl,
         positionMs: 0,
-        durationMs: (song.durationSeconds ?? 0) * 1000,
+        durationMs: (activeSong.durationSeconds ?? 0) * 1000,
       );
 
       if (kDebugMode) print('✅ Playback started');
