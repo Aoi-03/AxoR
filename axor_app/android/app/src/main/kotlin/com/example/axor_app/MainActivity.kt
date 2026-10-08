@@ -52,6 +52,7 @@ class MainActivity : FlutterActivity() {
                     val title = call.argument<String>("title") ?: "AXOR"
                     val artist = call.argument<String>("artist") ?: "Music"
                     val isPlaying = call.argument<Boolean>("isPlaying") ?: true
+                    val isLiked = call.argument<Boolean>("isLiked") ?: false
                     val coverUrl = call.argument<String>("coverUrl")
                     val positionMs = (call.argument<Int>("positionMs") ?: 0).toLong()
                     val durationMs = (call.argument<Int>("durationMs") ?: 0).toLong()
@@ -62,6 +63,7 @@ class MainActivity : FlutterActivity() {
                             putExtra(DynamicIslandService.EXTRA_TITLE, title)
                             putExtra(DynamicIslandService.EXTRA_ARTIST, artist)
                             putExtra(DynamicIslandService.EXTRA_IS_PLAYING, isPlaying)
+                            putExtra(DynamicIslandService.EXTRA_IS_LIKED, isLiked)
                             if (coverUrl != null) putExtra(DynamicIslandService.EXTRA_COVER_URL, coverUrl)
                             putExtra(DynamicIslandService.EXTRA_POSITION_MS, positionMs)
                             putExtra(DynamicIslandService.EXTRA_DURATION_MS, durationMs)
@@ -80,6 +82,7 @@ class MainActivity : FlutterActivity() {
                     val title = call.argument<String>("title")
                     val artist = call.argument<String>("artist")
                     val isPlaying = call.argument<Boolean>("isPlaying") ?: true
+                    val isLiked = call.argument<Boolean>("isLiked")
                     val coverUrl = call.argument<String>("coverUrl")
                     val positionMs = (call.argument<Int>("positionMs") ?: 0).toLong()
                     val durationMs = (call.argument<Int>("durationMs") ?: 0).toLong()
@@ -90,6 +93,7 @@ class MainActivity : FlutterActivity() {
                             if (title != null) putExtra(DynamicIslandService.EXTRA_TITLE, title)
                             if (artist != null) putExtra(DynamicIslandService.EXTRA_ARTIST, artist)
                             putExtra(DynamicIslandService.EXTRA_IS_PLAYING, isPlaying)
+                            if (isLiked != null) putExtra(DynamicIslandService.EXTRA_IS_LIKED, isLiked)
                             if (coverUrl != null) putExtra(DynamicIslandService.EXTRA_COVER_URL, coverUrl)
                             putExtra(DynamicIslandService.EXTRA_POSITION_MS, positionMs)
                             putExtra(DynamicIslandService.EXTRA_DURATION_MS, durationMs)

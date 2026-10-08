@@ -163,4 +163,11 @@ class MusicProvider with ChangeNotifier {
       song.energy >= 0.5 && song.energy <= 0.8
     ).toList();
   }
+
+  // Remove song from active library
+  void removeSong(String songId) {
+    _allSongs.removeWhere((s) => s.id == songId);
+    _searchResults.removeWhere((s) => s.id == songId);
+    notifyListeners();
+  }
 }

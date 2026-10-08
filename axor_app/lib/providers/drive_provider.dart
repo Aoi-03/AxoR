@@ -120,4 +120,15 @@ class DriveProvider with ChangeNotifier {
   Future<void> refresh() async {
     await loadAudioFiles(folderId: _currentFolderId);
   }
+
+  /// Clear all Drive state upon logout
+  void clear() {
+    _audioFiles = [];
+    _searchResults = [];
+    _folders = [];
+    _storageInfo = null;
+    _currentFolderId = null;
+    _errorMessage = null;
+    notifyListeners();
+  }
 }

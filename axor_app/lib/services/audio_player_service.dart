@@ -1,6 +1,7 @@
 import 'dart:io';
 import 'package:flutter/foundation.dart';
 import 'package:just_audio/just_audio.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import '../services/google_drive_service.dart';
 import '../services/dynamic_island_service.dart';
 import '../services/download_service.dart';
@@ -14,6 +15,7 @@ class AudioPlayerService with ChangeNotifier {
   factory AudioPlayerService() => _instance;
 
   AudioPlayerService._internal() {
+    _loadLikedSongs();
     _init();
   }
 
@@ -24,6 +26,7 @@ class AudioPlayerService with ChangeNotifier {
   List<DriveAudioFile> _queue = [];
   int _currentIndex = 0;
   int _playMode = 0; // 0: repeat, 1: repeat one, 2: shuffle, 3: AI
+  final Set<String> _likedSongIds = {};
 
   // ── Getters ──────────────────────────────────────────
   AudioPlayer get player => _player;
@@ -41,6 +44,63 @@ class AudioPlayerService with ChangeNotifier {
   Stream<Duration> get positionStream => _player.positionStream;
   Stream<Duration?> get durationStream => _player.durationStream;
   Stream<PlayerState> get playerStateStream => _player.playerStateStream;
+
+  // ── Like State & Persistence ─────────────────────────
+  bool isLiked(String id) => _likedSongIds.contains(id);
+  bool get isCurrentSongLiked => _currentSong != null && isLiked(_currentSong!.id);
+
+  Future<void> _loadLikedSongs() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final list = prefs.getStringList('axor_liked_song_ids') ?? [];
+      _likedSongIds.clear();
+      _likedSongIds.addAll(list);
+      notifyListeners();
+    } catch (_) {}
+  }
+
+  Future<void> _saveLikedSongs() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setStringList('axor_liked_song_ids', _likedSongIds.toList());
+    } catch (_) {}
+  }
+
+  /// Toggle like for current song and sync with Google Drive
+  Future<bool> toggleLikeCurrentSong() async {
+    if (_currentSong == null) return false;
+    return toggleLikeSong(_currentSong!);
+  }
+
+  /// Toggle like for any song and sync with Google Drive
+  Future<bool> toggleLikeSong(DriveAudioFile song) async {
+    final currentlyLiked = isLiked(song.id);
+    if (currentlyLiked) {
+      _likedSongIds.remove(song.id);
+      await _saveLikedSongs();
+      notifyListeners();
+      _driveService.removeSongFromDrive(song.id);
+      if (_currentSong?.id == song.id) {
+        DynamicIslandService.update(
+          isPlaying: isPlaying,
+          isLiked: false,
+        );
+      }
+      return false;
+    } else {
+      _likedSongIds.add(song.id);
+      await _saveLikedSongs();
+      notifyListeners();
+      _driveService.saveSongToDrive(song);
+      if (_currentSong?.id == song.id) {
+        DynamicIslandService.update(
+          isPlaying: isPlaying,
+          isLiked: true,
+        );
+      }
+      return true;
+    }
+  }
 
   // ── Play Mode Labels ──────────────────────────────────
   String get playModeLabel {
@@ -62,6 +122,8 @@ class AudioPlayerService with ChangeNotifier {
         togglePlayPause();
       } else if (action == 'next') {
         playNext();
+      } else if (action == 'toggleLike') {
+        toggleLikeCurrentSong();
       }
     });
 
@@ -72,6 +134,7 @@ class AudioPlayerService with ChangeNotifier {
           title: _currentSong!.displayTitle,
           artist: _currentSong!.displayArtist,
           isPlaying: state.playing,
+          isLiked: isCurrentSongLiked,
           coverUrl: _currentSong!.coverArtUrl,
           positionMs: _player.position.inMilliseconds,
           durationMs: _player.duration?.inMilliseconds ??
@@ -164,6 +227,7 @@ class AudioPlayerService with ChangeNotifier {
         title: activeSong.displayTitle,
         artist: activeSong.displayArtist,
         isPlaying: true,
+        isLiked: isLiked(activeSong.id),
         coverUrl: activeSong.coverArtUrl,
         positionMs: 0,
         durationMs: (activeSong.durationSeconds ?? 0) * 1000,
@@ -197,6 +261,7 @@ class AudioPlayerService with ChangeNotifier {
       await _player.pause();
       DynamicIslandService.update(
         isPlaying: false,
+        isLiked: isCurrentSongLiked,
         coverUrl: _currentSong?.coverArtUrl,
         positionMs: _player.position.inMilliseconds,
         durationMs: _player.duration?.inMilliseconds,
@@ -208,6 +273,7 @@ class AudioPlayerService with ChangeNotifier {
           title: _currentSong!.displayTitle,
           artist: _currentSong!.displayArtist,
           isPlaying: true,
+          isLiked: isCurrentSongLiked,
           coverUrl: _currentSong!.coverArtUrl,
           positionMs: _player.position.inMilliseconds,
           durationMs: _player.duration?.inMilliseconds,

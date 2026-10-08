@@ -10,6 +10,8 @@ import '../smart_modes/drive_mode_screen.dart';
 import '../../widgets/glass_card.dart';
 import '../../widgets/song_tile.dart';
 import '../../widgets/axor_image.dart';
+import '../../services/download_service.dart';
+import '../../services/google_drive_service.dart';
 
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
@@ -372,25 +374,74 @@ class _HomeScreenState extends State<HomeScreen> {
                   const SizedBox(height: 10),
 
                   // Show first 8 songs directly on home
-                  ...List.generate(
-                    songs.length > 8 ? 8 : songs.length,
-                    (index) {
-                      final song = songs[index];
-                      final isCurrentSong = audioPlayer.currentSong?.id == song.id;
-                      final isPlaying = isCurrentSong && audioPlayer.isPlaying;
+                  Consumer<DownloadService>(
+                    builder: (context, downloadService, _) {
+                      return Column(
+                        mainAxisSize: MainAxisSize.min,
+                        children: List.generate(
+                          songs.length > 8 ? 8 : songs.length,
+                          (index) {
+                            final song = songs[index];
+                            final driveFile = DriveAudioFile.fromSong(song);
+                            final isCurrentSong = audioPlayer.currentSong?.id == song.id;
+                            final isPlaying = isCurrentSong && audioPlayer.isPlaying;
+                            final isDownloaded = downloadService.isDownloaded(driveFile.id);
+                            final isDownloading = downloadService.isDownloading(driveFile.id);
 
-                      return Padding(
-                        padding: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 4.0),
-                        child: SongTile(
-                          index: index,
-                          title: song.title,
-                          artist: song.artist,
-                          duration: song.formattedDuration,
-                          albumArtUrl: song.coverUrl,
-                          isCurrentSong: isCurrentSong,
-                          isPlaying: isPlaying,
-                          onTap: () {
-                            audioPlayer.playAxorSong(song, playlist: songs, index: index);
+                            return Padding(
+                              padding: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 4.0),
+                              child: SongTile(
+                                index: index,
+                                title: song.title,
+                                artist: song.artist,
+                                duration: song.formattedDuration,
+                                albumArtUrl: song.coverUrl,
+                                isCurrentSong: isCurrentSong,
+                                isPlaying: isPlaying,
+                                onTap: () {
+                                  audioPlayer.playAxorSong(song, playlist: songs, index: index);
+                                },
+                                trailing: Row(
+                                  mainAxisSize: MainAxisSize.min,
+                                  children: [
+                                    if (isDownloading)
+                                      const SizedBox(
+                                        width: 20,
+                                        height: 20,
+                                        child: CircularProgressIndicator(
+                                          color: AppColors.primary,
+                                          strokeWidth: 2,
+                                        ),
+                                      )
+                                    else if (isDownloaded)
+                                      Container(
+                                        padding: const EdgeInsets.all(4),
+                                        decoration: BoxDecoration(
+                                          color: AppColors.green.withAlpha(20),
+                                          shape: BoxShape.circle,
+                                        ),
+                                        child: const Icon(Icons.download_done_rounded, color: AppColors.green, size: 16),
+                                      )
+                                    else
+                                      IconButton(
+                                        icon: const Icon(Icons.download_rounded, color: AppColors.primary, size: 20),
+                                        tooltip: 'Download to Local Library',
+                                        onPressed: () async {
+                                          ScaffoldMessenger.of(context).showSnackBar(
+                                            SnackBar(content: Text('Downloading ${song.title}...')),
+                                          );
+                                          await downloadService.downloadSong(driveFile);
+                                          if (context.mounted) {
+                                            ScaffoldMessenger.of(context).showSnackBar(
+                                              SnackBar(content: Text('Downloaded "${song.title}" — visible in Local list')),
+                                            );
+                                          }
+                                        },
+                                      ),
+                                  ],
+                                ),
+                              ),
+                            );
                           },
                         ),
                       );

@@ -1,3 +1,4 @@
+import 'dart:io';
 import 'package:flutter/foundation.dart';
 import 'package:google_sign_in/google_sign_in.dart';
 import 'package:googleapis/drive/v3.dart' as drive;
@@ -64,13 +65,19 @@ class GoogleDriveService {
     }
   }
 
-  /// Sign out
+  /// Sign out completely
   Future<void> signOut() async {
-    await _googleSignIn.signOut();
+    try {
+      await _googleSignIn.disconnect();
+    } catch (_) {}
+    try {
+      await _googleSignIn.signOut();
+    } catch (_) {}
     _currentUser = null;
     _driveApi = null;
     _httpClient?.close();
     _httpClient = null;
+    _axorFolderId = null;
   }
 
   /// Initialize Drive API client and resolve dedicated AxoR folder
@@ -292,6 +299,58 @@ class GoogleDriveService {
     } catch (e) {
       if (kDebugMode) print('Error getting storage info: $e');
       return DriveStorageInfo(used: 0, total: 0);
+    }
+  }
+
+  // ── Drive Save / Remove (Like Sync) ─────────────────────
+
+  /// Star or save a song to the user's Google Drive
+  Future<bool> saveSongToDrive(DriveAudioFile song) async {
+    if (_driveApi == null) return false;
+    try {
+      // 1. If it's already an existing Drive file, star it
+      if (song.id.isNotEmpty && !song.id.startsWith('local_')) {
+        try {
+          final patch = drive.File()..starred = true;
+          await _driveApi!.files.update(patch, song.id);
+          return true;
+        } catch (_) {}
+      }
+
+      // 2. If it's a local file, upload it to the "AxoR Music" folder
+      final folderId = await getOrCreateAxorFolder();
+      if (song.customStreamUrl != null) {
+        final localFile = File(song.customStreamUrl!);
+        if (localFile.existsSync()) {
+          final metadata = drive.File()
+            ..name = song.name
+            ..parents = folderId != null ? [folderId] : null
+            ..starred = true;
+          final media = drive.Media(localFile.openRead(), localFile.lengthSync());
+          await _driveApi!.files.create(metadata, uploadMedia: media);
+          return true;
+        }
+      }
+      return true;
+    } catch (e) {
+      if (kDebugMode) print('Error saving song to Drive: $e');
+      return false;
+    }
+  }
+
+  /// Unstar or remove a song from Google Drive
+  Future<bool> removeSongFromDrive(String songId) async {
+    if (_driveApi == null) return false;
+    try {
+      if (songId.isNotEmpty && !songId.startsWith('local_')) {
+        final patch = drive.File()..starred = false;
+        await _driveApi!.files.update(patch, songId);
+        return true;
+      }
+      return false;
+    } catch (e) {
+      if (kDebugMode) print('Error removing song from Drive: $e');
+      return false;
     }
   }
 }

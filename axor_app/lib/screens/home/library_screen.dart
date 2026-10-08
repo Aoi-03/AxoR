@@ -488,7 +488,6 @@ class _LibraryScreenState extends State<LibraryScreen> {
                     final file = displayedFiles[index];
                     final isCurrentSong = audioPlayer.currentSong?.id == file.id;
                     final isPlaying = isCurrentSong && audioPlayer.isPlaying;
-                    final isLocalDownloaded = downloadService.isDownloaded(file.id);
 
                     return Padding(
                       padding: const EdgeInsets.only(bottom: 6.0),
@@ -507,44 +506,47 @@ class _LibraryScreenState extends State<LibraryScreen> {
                             index: index,
                           );
                         },
-                        trailing: Row(
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            if (isLocalDownloaded)
-                              Container(
-                                padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-                                decoration: BoxDecoration(
-                                  color: AppColors.green.withAlpha(20),
-                                  borderRadius: BorderRadius.circular(4),
-                                  border: Border.all(color: AppColors.green.withAlpha(60)),
+                        trailing: IconButton(
+                          icon: const Icon(Icons.delete_outline_rounded, color: AppColors.error, size: 20),
+                          tooltip: 'Delete Song',
+                          onPressed: () async {
+                            final confirm = await showDialog<bool>(
+                              context: context,
+                              builder: (ctx) => AlertDialog(
+                                backgroundColor: AppColors.surfaceCard,
+                                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+                                title: const Text('Delete Song', style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
+                                content: Text(
+                                  'Remove "${file.displayTitle}" from your local library?',
+                                  style: const TextStyle(color: AppColors.textSecondary),
                                 ),
-                                child: const Row(
-                                  mainAxisSize: MainAxisSize.min,
-                                  children: [
-                                    Icon(Icons.download_done_rounded, color: AppColors.green, size: 12),
-                                    SizedBox(width: 4),
-                                    Text('LOCAL', style: TextStyle(color: AppColors.green, fontSize: 9, fontWeight: FontWeight.bold)),
-                                  ],
-                                ),
-                              )
-                            else
-                              Container(
-                                padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-                                decoration: BoxDecoration(
-                                  color: AppColors.surfaceElevated,
-                                  borderRadius: BorderRadius.circular(4),
-                                  border: Border.all(color: AppColors.primary.withAlpha(30)),
-                                ),
-                                child: const Text(
-                                  '320k',
-                                  style: TextStyle(
-                                    color: AppColors.cyan,
-                                    fontSize: 10,
-                                    fontWeight: FontWeight.bold,
+                                actions: [
+                                  TextButton(
+                                    onPressed: () => Navigator.pop(ctx, false),
+                                    child: const Text('Cancel', style: TextStyle(color: AppColors.textTertiary)),
                                   ),
-                                ),
+                                  ElevatedButton(
+                                    style: ElevatedButton.styleFrom(backgroundColor: AppColors.error),
+                                    onPressed: () => Navigator.pop(ctx, true),
+                                    child: const Text('Delete', style: TextStyle(color: Colors.white)),
+                                  ),
+                                ],
                               ),
-                          ],
+                            );
+
+                            if (confirm == true) {
+                              await downloadService.deleteDownloadedSong(file.id);
+                              if (context.mounted) {
+                                context.read<MusicProvider>().removeSong(file.id);
+                                ScaffoldMessenger.of(context).showSnackBar(
+                                  SnackBar(
+                                    content: Text('Deleted "${file.displayTitle}" from local library'),
+                                    duration: const Duration(seconds: 2),
+                                  ),
+                                );
+                              }
+                            }
+                          },
                         ),
                       ),
                     );

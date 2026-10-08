@@ -143,15 +143,33 @@ class FullPlayerScreen extends StatelessWidget {
                         child: Row(
                           mainAxisAlignment: MainAxisAlignment.center,
                           children: [
-                            // Like button (left of prev)
+                            // Like button (left of prev) — saves/removes song from Drive & Favorites
                             IconButton(
-                              onPressed: () {
-                                // TODO: Like functionality
-                              },
-                              icon: const Icon(
-                                Icons.favorite_border,
-                                color: AppColors.lightGray,
-                                size: 26,
+                              onPressed: currentSong != null
+                                  ? () async {
+                                      final isNowLiked = await audioPlayer.toggleLikeCurrentSong();
+                                      if (context.mounted) {
+                                        ScaffoldMessenger.of(context).showSnackBar(
+                                          SnackBar(
+                                            content: Text(
+                                              isNowLiked
+                                                  ? 'Saved "${currentSong.displayTitle}" to Drive Favorites'
+                                                  : 'Removed "${currentSong.displayTitle}" from Drive Favorites',
+                                            ),
+                                            duration: const Duration(seconds: 2),
+                                          ),
+                                        );
+                                      }
+                                    }
+                                  : null,
+                              icon: Icon(
+                                audioPlayer.isCurrentSongLiked
+                                    ? Icons.favorite_rounded
+                                    : Icons.favorite_border_rounded,
+                                color: audioPlayer.isCurrentSongLiked
+                                    ? const Color(0xFFFF3B30)
+                                    : AppColors.lightGray,
+                                size: 28,
                               ),
                             ),
                             const SizedBox(width: 4),

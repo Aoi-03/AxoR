@@ -37,10 +37,12 @@ class DynamicIslandService : Service() {
         const val ACTION_PREVIOUS = "com.example.axor_app.ACTION_PREVIOUS"
         const val ACTION_PLAY_PAUSE = "com.example.axor_app.ACTION_PLAY_PAUSE"
         const val ACTION_NEXT = "com.example.axor_app.ACTION_NEXT"
+        const val ACTION_TOGGLE_LIKE = "com.example.axor_app.ACTION_TOGGLE_LIKE"
 
         const val EXTRA_TITLE = "extra_title"
         const val EXTRA_ARTIST = "extra_artist"
         const val EXTRA_IS_PLAYING = "extra_is_playing"
+        const val EXTRA_IS_LIKED = "extra_is_liked"
         const val EXTRA_COVER_URL = "extra_cover_url"
         const val EXTRA_POSITION_MS = "extra_position_ms"
         const val EXTRA_DURATION_MS = "extra_duration_ms"
@@ -52,6 +54,7 @@ class DynamicIslandService : Service() {
     private var currentTitle = "AXOR"
     private var currentArtist = "Music"
     private var isPlaying = true
+    private var isLiked = false
     private var currentCoverUrl: String? = null
     private var currentPositionMs = 0L
     private var currentDurationMs = 0L
@@ -103,6 +106,11 @@ class DynamicIslandService : Service() {
                     override fun onStop() {
                         MainActivity.sendControlAction("playPause")
                     }
+                    override fun onCustomAction(action: String, extras: android.os.Bundle?) {
+                        if (action == "toggleLike") {
+                            MainActivity.sendControlAction("toggleLike")
+                        }
+                    }
                 })
             }
         } catch (e: Exception) {
@@ -124,10 +132,17 @@ class DynamicIslandService : Service() {
                 MainActivity.sendControlAction("next")
                 return START_NOT_STICKY
             }
+            ACTION_TOGGLE_LIKE -> {
+                MainActivity.sendControlAction("toggleLike")
+                return START_NOT_STICKY
+            }
             ACTION_SHOW -> {
                 currentTitle = intent.getStringExtra(EXTRA_TITLE) ?: currentTitle
                 currentArtist = intent.getStringExtra(EXTRA_ARTIST) ?: currentArtist
                 isPlaying = intent.getBooleanExtra(EXTRA_IS_PLAYING, true)
+                if (intent.hasExtra(EXTRA_IS_LIKED)) {
+                    isLiked = intent.getBooleanExtra(EXTRA_IS_LIKED, false)
+                }
                 currentPositionMs = intent.getLongExtra(EXTRA_POSITION_MS, 0L)
                 currentDurationMs = intent.getLongExtra(EXTRA_DURATION_MS, 0L)
 
@@ -147,6 +162,9 @@ class DynamicIslandService : Service() {
                 if (artist != null) currentArtist = artist
                 if (intent.hasExtra(EXTRA_IS_PLAYING)) {
                     isPlaying = intent.getBooleanExtra(EXTRA_IS_PLAYING, true)
+                }
+                if (intent.hasExtra(EXTRA_IS_LIKED)) {
+                    isLiked = intent.getBooleanExtra(EXTRA_IS_LIKED, false)
                 }
                 if (intent.hasExtra(EXTRA_POSITION_MS)) {
                     currentPositionMs = intent.getLongExtra(EXTRA_POSITION_MS, currentPositionMs)
@@ -199,6 +217,13 @@ class DynamicIslandService : Service() {
                     PlaybackState.ACTION_SEEK_TO or
                     PlaybackState.ACTION_STOP
                 )
+                .addCustomAction(
+                    PlaybackState.CustomAction.Builder(
+                        "toggleLike",
+                        if (isLiked) "Unlike" else "Like",
+                        if (isLiked) android.R.drawable.btn_star_big_on else android.R.drawable.btn_star_big_off
+                    ).build()
+                )
                 .build()
             session.setPlaybackState(playbackState)
         } catch (e: Exception) {
@@ -240,6 +265,12 @@ class DynamicIslandService : Service() {
                 Intent(this, DynamicIslandService::class.java).apply { action = ACTION_NEXT },
                 PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
             )
+            val likeIntent = PendingIntent.getService(
+                this,
+                4,
+                Intent(this, DynamicIslandService::class.java).apply { action = ACTION_TOGGLE_LIKE },
+                PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+            )
 
             val mediaStyle = Notification.MediaStyle()
                 .setMediaSession(session.sessionToken)
@@ -279,6 +310,13 @@ class DynamicIslandService : Service() {
                         android.R.drawable.ic_media_next,
                         "Next",
                         nextIntent
+                    ).build()
+                )
+                .addAction(
+                    Notification.Action.Builder(
+                        if (isLiked) android.R.drawable.btn_star_big_on else android.R.drawable.btn_star_big_off,
+                        if (isLiked) "Unlike" else "Like",
+                        likeIntent
                     ).build()
                 )
 
