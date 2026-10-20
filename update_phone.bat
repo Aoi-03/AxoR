@@ -22,27 +22,15 @@ if not exist "pubspec.yaml" (
 )
 
 echo [*] Checking connected Android devices...
-adb devices > "%TEMP%\adb_devices.txt"
-type "%TEMP%\adb_devices.txt"
+adb devices
 echo.
 
-findstr /r /c:"[a-zA-Z0-9].*device$" "%TEMP%\adb_devices.txt" >nul
-if errorlevel 1 (
-    echo [!] No authorized Android phone detected.
-    echo.
-    echo Please make sure:
-    echo   1. Your phone is connected via USB (File Transfer / MTP mode).
-    echo   2. "USB Debugging" is turned ON in Developer Options.
-    echo   3. You tap "Allow" on the USB Debugging prompt on your phone screen.
-    echo   4. (Wireless) Or connect via: adb connect ^<PHONE_IP^>:5555
-    echo.
-    pause
-    exit /b 1
-)
+adb get-state >nul 2>&1
+if errorlevel 1 goto :no_device
 
 echo [OK] Phone detected!
 echo.
-echo [*] Building optimized ARM64 release APK (Fast & Lightweight)...
+echo [*] Building optimized ARM64 release APK (Fast and Lightweight)...
 call flutter build apk --split-per-abi
 
 set "APK_PATH=build\app\outputs\flutter-apk\app-arm64-v8a-release.apk"
@@ -61,16 +49,30 @@ echo.
 echo [*] Installing/Updating AXOR on your phone (Keeping all songs and data)...
 adb install -r -d "!APK_PATH!"
 
-if errorlevel 0 (
-    echo.
-    echo =========================================================
-    echo [SUCCESS] AXOR has been updated successfully on your phone!
-    echo =========================================================
-) else (
-    echo.
-    echo [ERROR] Failed to install APK on your phone.
-)
+if errorlevel 1 goto :install_failed
 
-del "%TEMP%\adb_devices.txt" 2>nul
+echo.
+echo =========================================================
+echo [SUCCESS] AXOR has been updated successfully on your phone!
+echo =========================================================
 echo.
 pause
+exit /b 0
+
+:no_device
+echo [!] No authorized Android phone detected.
+echo.
+echo Please make sure:
+echo   1. Your phone is connected via USB.
+echo   2. USB Debugging is turned ON in Developer Options.
+echo   3. You tap Allow on the USB Debugging prompt on your phone screen.
+echo   4. Or connect wirelessly via: adb connect PHONE_IP:5555
+echo.
+pause
+exit /b 1
+
+:install_failed
+echo.
+echo [ERROR] Failed to install APK on your phone.
+pause
+exit /b 1

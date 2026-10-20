@@ -6,15 +6,22 @@ This guide contains **all universal commands and 1-click methods** to build, upd
 
 ## ⚡ 1-Click Instant Update (Easiest Method)
 
-We have created an automated update script: **`update_phone.bat`**.
+We have created automated update scripts: **`update_phone.bat`** (Batch) and **`update_phone.ps1`** (PowerShell).
 
 Whenever your phone is connected (via USB or Wi-Fi):
-1. Open PowerShell or Command Prompt in `axor_app`:
-   ```bat
-   .\update_phone.bat
-   ```
-   *(Or simply double-click `update_phone.bat` in Windows File Explorer)*
-2. It automatically checks for your phone, builds an optimized release APK, and updates the app **without losing your songs, login, or settings** (`-r` flag).
+
+### Option A: Double-Click (Zero Typing)
+- Open Windows File Explorer in `d:\AOI_ABHIJIT\My study\Programming\AxoR`
+- Simply **double-click** `update_phone.bat`.
+
+### Option B: From PowerShell / Terminal
+Run **only** this single line (do not include backticks ```` ``` ````):
+```powershell
+.\update_phone.bat
+```
+*(Or in PowerShell: `.\update_phone.ps1`)*
+
+It automatically checks for your phone, builds an optimized release APK, and updates the app **without losing your songs, login, or settings** (`-r` flag).
 
 ---
 
