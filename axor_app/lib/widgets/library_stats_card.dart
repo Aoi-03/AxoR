@@ -29,8 +29,8 @@ class _LibraryStatsCardState extends State<LibraryStatsCard> {
   @override
   void initState() {
     super.initState();
-    // 1-second interval ticker for alternating statistics
-    _ticker = Timer.periodic(const Duration(seconds: 1), (_) {
+    // 5-second interval ticker for alternating statistics (battery optimized & comfortably readable)
+    _ticker = Timer.periodic(const Duration(seconds: 5), (_) {
       if (mounted) {
         setState(() {
           _showDrive = !_showDrive;

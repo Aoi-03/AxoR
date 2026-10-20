@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'package:flutter/foundation.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../models/playlist.dart';
 
@@ -16,7 +17,7 @@ class PlaylistStorageService {
       final jsonString = jsonEncode(playlistsJson);
       return await prefs.setString(_playlistsKey, jsonString);
     } catch (e) {
-      print('❌ Error saving playlists: $e');
+      if (kDebugMode) print('❌ Error saving playlists: $e');
       return false;
     }
   }
@@ -34,7 +35,7 @@ class PlaylistStorageService {
       final List<dynamic> playlistsJson = jsonDecode(jsonString);
       return playlistsJson.map((json) => Playlist.fromJson(json)).toList();
     } catch (e) {
-      print('❌ Error loading playlists: $e');
+      if (kDebugMode) print('❌ Error loading playlists: $e');
       return [];
     }
   }
@@ -69,8 +70,10 @@ class PlaylistStorageService {
   /// Add song to playlist
   static Future<bool> addSongToPlaylist(String playlistId, String songId) async {
     final playlists = await loadPlaylists();
-    final playlist = playlists.firstWhere((p) => p.id == playlistId);
-    
+    final index = playlists.indexWhere((p) => p.id == playlistId);
+    if (index == -1) return false;
+
+    final playlist = playlists[index];
     if (playlist.songIds.contains(songId)) {
       return true; // Already in playlist
     }
@@ -86,8 +89,10 @@ class PlaylistStorageService {
   /// Remove song from playlist
   static Future<bool> removeSongFromPlaylist(String playlistId, String songId) async {
     final playlists = await loadPlaylists();
-    final playlist = playlists.firstWhere((p) => p.id == playlistId);
-    
+    final index = playlists.indexWhere((p) => p.id == playlistId);
+    if (index == -1) return false;
+
+    final playlist = playlists[index];
     final updatedSongIds = playlist.songIds.where((id) => id != songId).toList();
     final updatedPlaylist = playlist.copyWith(
       songIds: updatedSongIds,
@@ -113,7 +118,7 @@ class PlaylistStorageService {
       final prefs = await SharedPreferences.getInstance();
       return await prefs.remove(_playlistsKey);
     } catch (e) {
-      print('❌ Error clearing playlists: $e');
+      if (kDebugMode) print('❌ Error clearing playlists: $e');
       return false;
     }
   }

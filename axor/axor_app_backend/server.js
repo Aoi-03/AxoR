@@ -17,26 +17,11 @@ app.use(cors({
 }));
 app.use(express.json());
 
-// Storage mode: 'local' or 'mega'
-const STORAGE_MODE = process.env.STORAGE_MODE || 'local';
-
-// Music library path - YOUR ACTUAL MUSIC FOLDER (for local mode)
+// Music library path - YOUR ACTUAL MUSIC FOLDER
 const MUSIC_LIBRARY_PATH = process.env.MUSIC_LIBRARY_PATH || 'D:\\Downloads\\Liked_Songs';
 
-// MEGA configuration (for mega mode)
-const MEGA_PUBLIC_FOLDER_URL = process.env.MEGA_PUBLIC_FOLDER_URL || 'https://mega.nz/folder/X3BR2aZR#09OOI5s-5vtw0BBomoHphw';
-
-// MEGA service instance
-let megaService = null;
-if (STORAGE_MODE === 'mega') {
-  const MegaPublicService = require('./mega_public_service');
-  megaService = new MegaPublicService(MEGA_PUBLIC_FOLDER_URL);
-}
-
-// Serve static files (songs from your library) - only for local mode
-if (STORAGE_MODE === 'local') {
-  app.use('/songs', express.static(MUSIC_LIBRARY_PATH));
-}
+// Serve static files (songs from your library)
+app.use('/songs', express.static(MUSIC_LIBRARY_PATH));
 
 // Database paths (only for users and playlists)
 const DB_PATH = path.join(__dirname, '../database');
@@ -47,21 +32,12 @@ const PLAYLISTS_DB = path.join(DB_PATH, 'playlists.json');
 const METADATA_CACHE_DIR = path.join(__dirname, 'song_metadata_cache');
 const METADATA_CACHE_FILE = path.join(METADATA_CACHE_DIR, 'song_metadata.json');
 
-// MEGA file cache path
-const MEGA_CACHE_DIR = path.join(__dirname, 'mega_cache');
-const MEGA_CACHE_COVERS_DIR = path.join(MEGA_CACHE_DIR, 'covers');
-const MEGA_CACHE_FILES_DIR = path.join(MEGA_CACHE_DIR, 'files');
+// Cover art cache path
+const COVER_CACHE_DIR = path.join(__dirname, 'cover_cache');
 
-// Cache configuration
-const MAX_CACHED_SONGS = 3; // Keep max 3 songs in cache (safe for server)
-const PRIORITY_CACHE_COUNT = 3; // Pre-cache first 3 songs
-
-// In-memory songs cache (scanned from your FLAC files or MEGA)
+// In-memory songs cache (scanned from local audio files)
 let songsCache = [];
 let metadataCache = {};
-let megaFileCache = new Map(); // Cache for downloaded MEGA files: songId -> { path, lastUsed, size }
-let cacheQueue = []; // Track cache order for LRU
-let cachingInProgress = new Map(); // Track songs currently being cached: songId -> { progress, startTime }
 
 // Helper: Read JSON file
 const readJSON = (filePath) => {
@@ -109,275 +85,16 @@ function loadMetadataCache() {
   }
 }
 
-// Helper: Initialize MEGA cache directories
-function initMegaCache() {
+// Helper: Initialize cover cache directory
+function initCoverCache() {
   try {
-    if (!fs.existsSync(MEGA_CACHE_DIR)) {
-      fs.mkdirSync(MEGA_CACHE_DIR, { recursive: true });
+    if (!fs.existsSync(COVER_CACHE_DIR)) {
+      fs.mkdirSync(COVER_CACHE_DIR, { recursive: true });
     }
-    if (!fs.existsSync(MEGA_CACHE_COVERS_DIR)) {
-      fs.mkdirSync(MEGA_CACHE_COVERS_DIR, { recursive: true });
-    }
-    if (!fs.existsSync(MEGA_CACHE_FILES_DIR)) {
-      fs.mkdirSync(MEGA_CACHE_FILES_DIR, { recursive: true });
-    }
-    
-    // Load existing cache
-    const cachedFiles = fs.readdirSync(MEGA_CACHE_FILES_DIR);
-    for (const file of cachedFiles) {
-      if (file.endsWith('.flac')) {
-        const songId = file.replace('.flac', '');
-        const filePath = path.join(MEGA_CACHE_FILES_DIR, file);
-        const stats = fs.statSync(filePath);
-        megaFileCache.set(songId, {
-          path: filePath,
-          lastUsed: stats.mtime,
-          size: stats.size
-        });
-        cacheQueue.push(songId);
-      }
-    }
-    
-    console.log(`📁 MEGA cache initialized (${megaFileCache.size} songs cached)`);
-    
-    // Clean up if over limit
-    while (megaFileCache.size > MAX_CACHED_SONGS) {
-      console.log(`🧹 Cleaning up cache (${megaFileCache.size}/${MAX_CACHED_SONGS})...`);
-      removeOldestCache();
-    }
-    
-    console.log(`✅ Cache ready (${megaFileCache.size}/${MAX_CACHED_SONGS} slots used)`);
   } catch (error) {
-    console.error('❌ Error initializing MEGA cache:', error);
+    console.error('❌ Error initializing cover cache:', error);
   }
 }
-
-// Helper: Remove oldest cached file (LRU)
-function removeOldestCache() {
-  if (cacheQueue.length === 0) return;
-  
-  const oldestSongId = cacheQueue.shift();
-  const cacheInfo = megaFileCache.get(oldestSongId);
-  
-  if (cacheInfo) {
-    try {
-      if (fs.existsSync(cacheInfo.path)) {
-        fs.unlinkSync(cacheInfo.path);
-        console.log(`🗑️  Removed old cache: ${oldestSongId}`);
-      }
-      megaFileCache.delete(oldestSongId);
-    } catch (error) {
-      console.error(`❌ Error removing cache:`, error.message);
-    }
-  }
-}
-
-// Helper: Update cache usage (move to end of queue)
-function updateCacheUsage(songId) {
-  const index = cacheQueue.indexOf(songId);
-  if (index > -1) {
-    cacheQueue.splice(index, 1);
-  }
-  cacheQueue.push(songId);
-  
-  const cacheInfo = megaFileCache.get(songId);
-  if (cacheInfo) {
-    cacheInfo.lastUsed = new Date();
-  }
-}
-
-// Helper: Cache MEGA file to disk with LRU management
-async function cacheMegaFile(song, priority = false) {
-  try {
-    const cacheFilePath = path.join(MEGA_CACHE_FILES_DIR, `${song.id}.flac`);
-    
-    // Check if already cached
-    if (megaFileCache.has(song.id)) {
-      console.log(`✅ Already cached: ${song.title}`);
-      updateCacheUsage(song.id);
-      return megaFileCache.get(song.id).path;
-    }
-    
-    // Check if already caching
-    if (cachingInProgress.has(song.id)) {
-      console.log(`⏳ Already caching: ${song.title}`);
-      // Wait for it to finish
-      while (cachingInProgress.has(song.id)) {
-        await new Promise(resolve => setTimeout(resolve, 100));
-      }
-      return megaFileCache.get(song.id)?.path;
-    }
-    
-    // Mark as caching
-    cachingInProgress.set(song.id, {
-      progress: 0,
-      startTime: Date.now(),
-      title: song.title
-    });
-    
-    // Check cache limit - remove oldest if full
-    if (megaFileCache.size >= MAX_CACHED_SONGS) {
-      console.log(`📦 Cache full (${megaFileCache.size}/${MAX_CACHED_SONGS}), removing oldest...`);
-      removeOldestCache();
-    }
-    
-    console.log(`${priority ? '⚡' : '📥'} Caching: ${song.title}`);
-    const startTime = Date.now();
-    
-    // Download from MEGA with progress tracking
-    const chunks = [];
-    let downloadedBytes = 0;
-    const megaStream = song.megaFile.download();
-    
-    megaStream.on('data', (chunk) => {
-      chunks.push(chunk);
-      downloadedBytes += chunk.length;
-      
-      // Update progress
-      const progress = Math.round((downloadedBytes / song.fileSize) * 100);
-      cachingInProgress.set(song.id, {
-        progress: progress,
-        startTime: startTime,
-        title: song.title,
-        downloadedBytes: downloadedBytes,
-        totalBytes: song.fileSize
-      });
-    });
-    
-    await new Promise((resolve, reject) => {
-      megaStream.on('end', () => resolve());
-      megaStream.on('error', (error) => reject(error));
-    });
-    
-    const fileBuffer = Buffer.concat(chunks);
-    const downloadTime = ((Date.now() - startTime) / 1000).toFixed(1);
-    
-    // Save to disk
-    fs.writeFileSync(cacheFilePath, fileBuffer);
-    
-    megaFileCache.set(song.id, {
-      path: cacheFilePath,
-      lastUsed: new Date(),
-      size: fileBuffer.length
-    });
-    cacheQueue.push(song.id);
-    
-    // Remove from caching progress
-    cachingInProgress.delete(song.id);
-    
-    console.log(`✅ Cached: ${song.title} (${(fileBuffer.length / 1024 / 1024).toFixed(1)} MB in ${downloadTime}s)`);
-    
-    // Also extract and cache cover
-    await extractAndCacheCover(song.id, fileBuffer);
-    
-    return cacheFilePath;
-  } catch (error) {
-    console.error(`❌ Error caching ${song.title}:`, error.message);
-    cachingInProgress.delete(song.id);
-    return null;
-  }
-}
-
-// Helper: Extract and cache cover from file buffer
-async function extractAndCacheCover(songId, fileBuffer) {
-  try {
-    const coverCachePath = path.join(MEGA_CACHE_COVERS_DIR, `${songId}.jpg`);
-    
-    // Check if already cached
-    if (fs.existsSync(coverCachePath)) {
-      return coverCachePath;
-    }
-    
-    // First try music-metadata buffer parsing
-    try {
-      const metadata = await mm.parseBuffer(fileBuffer);
-      if (metadata && metadata.common && metadata.common.picture && metadata.common.picture.length > 0) {
-        const pic = metadata.common.picture[0];
-        fs.writeFileSync(coverCachePath, pic.data);
-        console.log(`🖼️  Cached cover for song ${songId} (from metadata)`);
-        return coverCachePath;
-      }
-    } catch (parseErr) {
-      // Fall through to manual byte scanning
-    }
-    
-    // Fallback: Look for JPEG in file
-    let imageStart = -1;
-    let imageEnd = -1;
-    
-    for (let i = 0; i < fileBuffer.length - 3; i++) {
-      if (fileBuffer[i] === 0xFF && fileBuffer[i + 1] === 0xD8 && fileBuffer[i + 2] === 0xFF) {
-        imageStart = i;
-        for (let j = i + 3; j < fileBuffer.length - 1; j++) {
-          if (fileBuffer[j] === 0xFF && fileBuffer[j + 1] === 0xD9) {
-            imageEnd = j + 2;
-            break;
-          }
-        }
-        break;
-      }
-    }
-    
-    if (imageStart !== -1 && imageEnd !== -1) {
-      const imageBuffer = fileBuffer.slice(imageStart, imageEnd);
-      fs.writeFileSync(coverCachePath, imageBuffer);
-      console.log(`🖼️  Cached cover for song ${songId}`);
-      return coverCachePath;
-    }
-    
-    return null;
-  } catch (error) {
-    console.error(`❌ Error caching cover:`, error.message);
-    return null;
-  }
-}
-
-// Helper: Pre-cache all covers at startup (DISABLED for memory optimization)
-async function preCacheAllCovers() {
-  // DISABLED: Pre-caching all covers uses too much memory on free tier (512MB limit)
-  // Covers will be cached on-demand when requested instead
-  console.log(`ℹ️  Cover pre-caching disabled (on-demand caching enabled)`);
-  return;
-  
-  /* ORIGINAL CODE - DISABLED
-  if (STORAGE_MODE !== 'mega' || songsCache.length === 0) return;
-  
-  console.log(`🖼️  Pre-caching covers for ${songsCache.length} songs...`);
-  
-  let cachedCount = 0;
-  let alreadyCached = 0;
-  
-  for (const song of songsCache) {
-    const coverCachePath = path.join(MEGA_CACHE_COVERS_DIR, `${song.id}.jpg`);
-    
-    // Check if already cached
-    if (fs.existsSync(coverCachePath)) {
-      alreadyCached++;
-      continue;
-    }
-    
-    try {
-      // Download file to extract cover
-      const chunks = [];
-      const megaStream = song.megaFile.download();
-      
-      await new Promise((resolve, reject) => {
-        megaStream.on('data', (chunk) => chunks.push(chunk));
-        megaStream.on('end', () => resolve());
-        megaStream.on('error', (error) => reject(error));
-      });
-      
-      const fileBuffer = Buffer.concat(chunks);
-      
-      // Extract and cache cover
-      await extractAndCacheCover(song.id, fileBuffer);
-      cachedCount++;
-      
-      console.log(`🖼️  Cached cover ${cachedCount}/${songsCache.length - alreadyCached}: ${song.title}`);
-      
-    } catch (error) {
-      console.error(`❌ Error caching cover for ${song.title}:`, error.message);
-    }
   }
   
   console.log(`✅ Cover pre-caching complete! (${alreadyCached} already cached, ${cachedCount} newly cached)`);
@@ -695,7 +412,7 @@ async function scanMusicLibrary() {
         // Cache cover if available
         if (metadata && metadata.common && metadata.common.picture && metadata.common.picture.length > 0) {
           try {
-            const coverCachePath = path.join(MEGA_CACHE_COVERS_DIR, `${songId}.jpg`);
+            const coverCachePath = path.join(COVER_CACHE_DIR, `${songId}.jpg`);
             if (!fs.existsSync(coverCachePath)) {
               fs.writeFileSync(coverCachePath, metadata.common.picture[0].data);
             }
@@ -821,80 +538,19 @@ function estimateMood(energy) {
   return 'sad';
 }
 
-// Helper: Remove megaFile from song (to avoid circular reference in JSON)
-function cleanSong(song) {
-  const { megaFile, ...songWithoutMegaFile } = song;
-  return songWithoutMegaFile;
-}
-
-// Helper: Remove megaFile from array of songs
-function cleanSongs(songs) {
-  return songs.map(cleanSong);
-}
-
 // Initialize: Load metadata cache and scan library on startup
 (async () => {
   console.log('========================================');
   console.log('  AXOR Music Backend');
   console.log('========================================');
-  console.log(`📦 Storage Mode: ${STORAGE_MODE.toUpperCase()}`);
+  console.log('💻 Using Local File Storage');
+  console.log(`📁 Path: ${MUSIC_LIBRARY_PATH}`);
   console.log('');
   
   loadMetadataCache();
-  initMegaCache();
+  initCoverCache();
   
-  if (STORAGE_MODE === 'mega') {
-    // MEGA mode - using public folder
-    console.log('🌐 Using MEGA Cloud Storage (Public Folder)');
-    const connected = await megaService.loadFolder();
-    if (connected) {
-      const megaSongs = await megaService.listFiles();
-      
-      // Convert MEGA songs to our format
-      songsCache = megaSongs.map((megaSong) => {
-        const songId = megaSong.id;
-        const title = megaSong.name.replace('.flac', '');
-        
-        return {
-          id: songId,
-          title: title,
-          artist: 'Unknown Artist',
-          album: 'Unknown Album',
-          duration: 0,
-          bpm: 120,
-          energy: 0.6,
-          mood: 'neutral',
-          genre: 'Unknown',
-          filePath: `/api/songs/stream/${songId}`, // Use backend streaming endpoint
-          coverPath: 'embedded',
-          fileSize: megaSong.size,
-          format: 'FLAC',
-          sampleRate: 44100,
-          bitrate: 1411,
-          year: null,
-          fileName: megaSong.name,
-          megaFile: megaSong.megaFile // Store MEGA file object for streaming
-        };
-      });
-      
-      console.log(`✅ Loaded ${songsCache.length} songs from MEGA public folder`);
-      
-      // Pre-cache all covers in background
-      console.log('🖼️  Starting cover pre-caching in background...');
-      preCacheAllCovers().then(() => {
-        console.log('✅ All covers ready!');
-      }).catch(error => {
-        console.error('❌ Cover pre-caching error:', error.message);
-      });
-    } else {
-      console.error('❌ Failed to load MEGA public folder. Check the URL in .env');
-    }
-  } else {
-    // Local mode
-    console.log('💻 Using Local File Storage');
-    console.log(`📁 Path: ${MUSIC_LIBRARY_PATH}`);
-    songsCache = await scanMusicLibrary();
-  }
+  songsCache = await scanMusicLibrary();
 })();
 
 // ==================== AUTH ROUTES ====================
@@ -970,13 +626,7 @@ app.get('/api/songs', (req, res) => {
     console.log(`🔍 Sample song filePath: ${songsCache[0].filePath}`);
   }
   
-  // Remove megaFile object to avoid circular reference
-  const songsToSend = songsCache.map(song => {
-    const { megaFile, ...songWithoutMegaFile } = song;
-    return songWithoutMegaFile;
-  });
-  
-  res.json({ success: true, songs: songsToSend });
+  res.json({ success: true, songs: songsCache });
 });
 
 // Rescan library
@@ -1039,161 +689,49 @@ app.get('/api/songs/liked/:userId', (req, res) => {
   res.json({ success: true, songs: likedSongs });
 });
 
-// Get album art from FLAC file - Works for both LOCAL and MEGA modes
+// Get album art from audio file
 app.get('/api/songs/cover/:songId', async (req, res) => {
   const { songId } = req.params;
   
   try {
     const song = songsCache.find(s => s.id === songId);
     if (!song) {
-      console.log(`❌ Cover not found for songId: ${songId}`);
       return res.status(404).json({ success: false, message: 'Song not found' });
     }
     
     // Check if cover is cached
-    const coverCachePath = path.join(MEGA_CACHE_COVERS_DIR, `${songId}.jpg`);
+    const coverCachePath = path.join(COVER_CACHE_DIR, `${songId}.jpg`);
     if (fs.existsSync(coverCachePath)) {
       const imageBuffer = fs.readFileSync(coverCachePath);
       res.set('Content-Type', 'image/jpeg');
       res.set('Cache-Control', 'public, max-age=86400');
       res.send(imageBuffer);
-      console.log(`✅ Served cached cover for: ${song.title}`);
       return;
     }
     
-    let fileBuffer;
-    
-    if (STORAGE_MODE === 'mega') {
-      // Check if file is cached
-      const cacheInfo = megaFileCache.get(songId);
-      if (cacheInfo && fs.existsSync(cacheInfo.path)) {
-        fileBuffer = fs.readFileSync(cacheInfo.path);
-        console.log(`✅ Using cached file for cover: ${song.title}`);
-      } else {
-        // Download from MEGA
-        console.log(`📥 Downloading from MEGA to extract cover: ${song.title}`);
-        
-        if (!song.megaFile) {
-          return res.status(404).json({ success: false, message: 'MEGA file not found' });
-        }
-        
-        const chunks = [];
-        const megaStream = song.megaFile.download();
-        
-        await new Promise((resolve, reject) => {
-          megaStream.on('data', (chunk) => chunks.push(chunk));
-          megaStream.on('end', () => resolve());
-          megaStream.on('error', (error) => reject(error));
-        });
-        
-        fileBuffer = Buffer.concat(chunks);
-        console.log(`✅ Downloaded ${fileBuffer.length} bytes from MEGA`);
-      }
-      
-    } else {
-      // LOCAL mode - read from file system
-      if (!song.fileName) {
-        return res.status(404).json({ success: false, message: 'File name not found' });
-      }
-      
-      const filePath = path.join(MUSIC_LIBRARY_PATH, song.fileName);
-      
-      if (!fs.existsSync(filePath)) {
-        console.log(`❌ File does not exist: ${filePath}`);
-        return res.status(404).json({ success: false, message: 'File not found' });
-      }
-      
-      fileBuffer = fs.readFileSync(filePath);
+    if (!song.fileName) {
+      return res.status(404).json({ success: false, message: 'File name not found' });
     }
     
-    // Extract cover and cache it
-    const cachedCover = await extractAndCacheCover(songId, fileBuffer);
+    const filePath = path.join(MUSIC_LIBRARY_PATH, song.fileName);
+    if (!fs.existsSync(filePath)) {
+      return res.status(404).json({ success: false, message: 'Audio file not found on disk' });
+    }
     
-    if (cachedCover && fs.existsSync(cachedCover)) {
-      const imageBuffer = fs.readFileSync(cachedCover);
-      res.set('Content-Type', 'image/jpeg');
+    // Extract cover using music-metadata
+    const metadata = await mm.parseFile(filePath);
+    if (metadata && metadata.common && metadata.common.picture && metadata.common.picture.length > 0) {
+      const picture = metadata.common.picture[0];
+      fs.writeFileSync(coverCachePath, picture.data);
+      res.set('Content-Type', picture.format || 'image/jpeg');
       res.set('Cache-Control', 'public, max-age=86400');
-      res.send(imageBuffer);
-      console.log(`✅ Extracted and cached cover for: ${song.title}`);
+      res.send(picture.data);
     } else {
-      console.log(`⚠️  No cover image found in: ${song.title}`);
       res.status(404).json({ success: false, message: 'No cover art found' });
     }
-    
   } catch (error) {
-    console.error('❌ Error extracting cover:', error.message);
+    console.error(`❌ Error extracting cover for ${songId}:`, error.message);
     res.status(500).json({ success: false, message: 'Failed to extract cover' });
-  }
-});
-
-// Stream song from MEGA (for MEGA mode) - direct streaming, no caching
-app.get('/api/songs/stream/:songId', async (req, res) => {
-  if (STORAGE_MODE !== 'mega') {
-    return res.status(400).json({ success: false, message: 'Streaming only available in MEGA mode' });
-  }
-  
-  const { songId } = req.params;
-  
-  try {
-    const song = songsCache.find(s => s.id === songId);
-    if (!song || !song.megaFile) {
-      console.log(`❌ Song not found: ${songId}`);
-      return res.status(404).json({ success: false, message: 'Song not found' });
-    }
-    
-    console.log(`🎵 Streaming from MEGA: ${song.title}`);
-    
-    // Stream directly from MEGA (no caching)
-    const megaStream = song.megaFile.download();
-    
-    // Set headers for streaming
-    res.set('Content-Type', 'audio/flac');
-    if (song.fileSize) {
-      res.set('Content-Length', song.fileSize);
-    }
-    res.set('Accept-Ranges', 'bytes');
-    res.set('Cache-Control', 'no-cache');
-    res.set('Access-Control-Allow-Origin', '*');
-    res.set('Connection', 'keep-alive');
-    
-    // Handle client disconnect
-    let streamDestroyed = false;
-    
-    req.on('close', () => {
-      if (!streamDestroyed) {
-        console.log(`🔌 Client disconnected: ${song.title}`);
-        streamDestroyed = true;
-        if (megaStream && !megaStream.destroyed) {
-          megaStream.destroy();
-        }
-      }
-    });
-    
-    // Pipe MEGA stream directly to response
-    megaStream.pipe(res);
-    
-    megaStream.on('error', (error) => {
-      if (!streamDestroyed) {
-        console.error(`❌ MEGA stream error: ${error.message}`);
-        streamDestroyed = true;
-        if (!res.headersSent) {
-          res.status(500).json({ success: false, message: 'Stream error' });
-        }
-      }
-    });
-    
-    megaStream.on('end', () => {
-      if (!streamDestroyed) {
-        console.log(`✅ Finished streaming: ${song.title}`);
-        streamDestroyed = true;
-      }
-    });
-    
-  } catch (error) {
-    console.error('❌ Error streaming from MEGA:', error.message);
-    if (!res.headersSent) {
-      res.status(500).json({ success: false, message: 'Failed to stream song' });
-    }
   }
 });
 
@@ -1672,14 +1210,8 @@ app.get('/api/playlists/:playlistId/songs', (req, res) => {
   
   // Get full song data for each song ID
   const playlistSongs = playlist.songs
-    .map(songId => {
-      const song = songsCache.find(s => s.id === songId);
-      if (!song) return null;
-      // Remove megaFile to avoid circular reference
-      const { megaFile, ...songWithoutMegaFile } = song;
-      return songWithoutMegaFile;
-    })
-    .filter(song => song !== null);
+    .map(songId => songsCache.find(s => s.id === songId))
+    .filter(song => song !== null && song !== undefined);
   
   res.json({ success: true, songs: playlistSongs, playlist });
 });

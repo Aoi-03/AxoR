@@ -1,5 +1,6 @@
 import 'package:flutter/foundation.dart';
 import '../services/google_drive_service.dart';
+import '../services/local_library_service.dart';
 
 /// Drive Provider
 /// Manages Google Drive file listing, searching, and caching
@@ -40,6 +41,22 @@ class DriveProvider with ChangeNotifier {
 
     try {
       _audioFiles = await _driveService.listAudioFiles(folderId: folderId);
+
+      // Reconcile and enrich with cached/local metadata and album artwork
+      final localLibrary = LocalLibraryService();
+      for (final f in _audioFiles) {
+        if (f.coverArtUrl == null || f.coverArtUrl!.isEmpty) {
+          final matched = localLibrary.findDuplicate(f);
+          if (matched != null) {
+            if (matched.artworkReference != null && matched.artworkReference!.isNotEmpty) {
+              f.coverArtUrl = matched.artworkReference;
+            } else if (matched.coverUrl.isNotEmpty) {
+              f.coverArtUrl = matched.coverUrl;
+            }
+          }
+        }
+      }
+
       if (kDebugMode) {
         print('📁 Loaded ${_audioFiles.length} audio files from Drive');
       }

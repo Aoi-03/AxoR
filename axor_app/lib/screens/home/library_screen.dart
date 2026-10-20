@@ -8,6 +8,7 @@ import '../../services/audio_player_service.dart';
 import '../../services/connectivity_service.dart';
 import '../../services/download_service.dart';
 import '../../services/google_drive_service.dart';
+import '../../services/local_library_service.dart';
 import '../../widgets/library_stats_card.dart';
 import '../../widgets/song_tile.dart';
 
@@ -316,18 +317,26 @@ class _LibraryScreenState extends State<LibraryScreen> {
           );
         }
 
-        // Build unified local track list: Downloaded songs + Backend songs
+        // Build unified local track list: Downloaded songs + Indexed songs + Backend songs
         final List<DriveAudioFile> allLocalFiles = [];
         final Set<String> seenIds = {};
 
-        // Downloaded files first (100% available offline)
+        // 1. Downloaded files first (100% available offline)
         for (final d in downloadService.downloadedSongs) {
           if (seenIds.add(d.id)) {
             allLocalFiles.add(d);
           }
         }
 
-        // Backend songs
+        // 2. Persistent Hive indexed songs (offline-first database)
+        final localIndexed = LocalLibraryService().getAllSongs();
+        for (final s in localIndexed) {
+          if (seenIds.add(s.id)) {
+            allLocalFiles.add(DriveAudioFile.fromSong(s));
+          }
+        }
+
+        // 3. Backend songs
         for (final s in music.allSongs) {
           if (seenIds.add(s.id)) {
             allLocalFiles.add(DriveAudioFile.fromSong(s));

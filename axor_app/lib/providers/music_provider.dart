@@ -1,6 +1,7 @@
 import 'package:flutter/foundation.dart';
 import '../models/song.dart';
 import '../services/api_service.dart';
+import '../services/local_library_service.dart';
 
 /// Music Provider
 /// Manages songs and backend state
@@ -24,26 +25,62 @@ class MusicProvider with ChangeNotifier {
     notifyListeners();
   }
   
-  // Load all songs from backend
+  // Load songs with local-first strategy
   Future<void> loadSongs() async {
     _isLoading = true;
     _error = null;
-    notifyListeners();
-    
+
+    // 1. Optimistic local-first load from persistent index
+    final localService = LocalLibraryService();
+    final localSongs = localService.getAllSongs();
+    if (localSongs.isNotEmpty) {
+      _allSongs = localSongs;
+      notifyListeners();
+    }
+
     try {
-      _allSongs = await ApiService.getAllSongs();
+      final backendSongs = await ApiService.getAllSongs();
       _isConnected = true;
+
+      // 2. Reconcile / index backend songs into local service
+      if (backendSongs.isNotEmpty) {
+        final existingMap = {for (final s in localSongs) s.id: s};
+        final merged = <Song>[];
+
+        for (final bSong in backendSongs) {
+          final existing = existingMap[bSong.id];
+          if (existing != null && existing.isLocal) {
+            // Keep local download state
+            merged.add(bSong.copyWith(
+              availabilityStatus: existing.availabilityStatus,
+              downloadStatus: existing.downloadStatus,
+              localFilePath: existing.localFilePath,
+              contentHash: existing.contentHash,
+              artworkReference: existing.artworkReference,
+            ));
+          } else {
+            merged.add(bSong);
+          }
+        }
+
+        _allSongs = merged;
+        await localService.indexSongs(merged);
+      }
+
       if (kDebugMode) {
-        print('✅ Loaded ${_allSongs.length} songs from backend');
+        print('✅ Loaded ${_allSongs.length} songs (local-first synchronized)');
       }
     } catch (e) {
-      _error = 'Failed to load songs: $e';
+      // Offline fallback: keep locally indexed songs
       _isConnected = false;
+      if (_allSongs.isEmpty) {
+        _error = 'Offline: showing local library';
+      }
       if (kDebugMode) {
-        print('❌ Error loading songs: $e');
+        print('ℹ️ Backend unreachable, using ${_allSongs.length} local songs: $e');
       }
     }
-    
+
     _isLoading = false;
     notifyListeners();
   }

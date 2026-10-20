@@ -1,7 +1,16 @@
+# Environment variables & secrets
+**/.env
+**/.env.local
+**/.env.*.local
+!**/.env.example
+*.key
+*.pem
+*.keystore
+
 # Backend specific
 axor/axor_app_backend/node_modules/
-axor/axor_app_backend/.env
 axor/axor_app_backend/mega_cache/
+axor/axor_app_backend/cover_cache/
 axor/axor_app_backend/song_metadata_cache/
 axor/axor_app_backend/*.log
 

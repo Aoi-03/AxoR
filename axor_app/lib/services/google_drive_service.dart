@@ -24,6 +24,7 @@ class GoogleDriveService {
   drive.DriveApi? _driveApi;
   http.Client? _httpClient;
   String? _axorFolderId;
+  Map<String, String>? _cachedAuthHeaders;
 
   // ── Getters ──────────────────────────────────────────
   GoogleSignInAccount? get currentUser => _currentUser;
@@ -32,6 +33,7 @@ class GoogleDriveService {
   String? get userName => _currentUser?.displayName;
   String? get userPhotoUrl => _currentUser?.photoUrl;
   String? get axorFolderId => _axorFolderId;
+  Map<String, String>? get cachedAuthHeaders => _cachedAuthHeaders;
 
   // ── Auth ──────────────────────────────────────────────
 
@@ -78,6 +80,7 @@ class GoogleDriveService {
     _httpClient?.close();
     _httpClient = null;
     _axorFolderId = null;
+    _cachedAuthHeaders = null;
   }
 
   /// Initialize Drive API client and resolve dedicated AxoR folder
@@ -86,6 +89,7 @@ class GoogleDriveService {
     if (httpClient != null) {
       _httpClient = httpClient;
       _driveApi = drive.DriveApi(httpClient);
+      await getAuthHeaders(); // Pre-cache bearer headers for image/stream requests
       await getOrCreateAxorFolder();
     }
   }
@@ -149,6 +153,9 @@ class GoogleDriveService {
     if (_driveApi == null) return [];
 
     try {
+      // Refresh headers cache
+      getAuthHeaders();
+
       // Build MIME type query
       final mimeQuery =
           _audioMimeTypes.map((m) => "mimeType='$m'").join(' or ');
@@ -159,6 +166,7 @@ class GoogleDriveService {
         query += " and '$targetFolder' in parents";
       }
 
+      // 1. Fetch audio files
       final fileList = await _driveApi!.files.list(
         q: query,
         spaces: 'drive',
@@ -169,9 +177,51 @@ class GoogleDriveService {
         orderBy: 'name',
       );
 
-      return fileList.files
-              ?.map((f) => DriveAudioFile.fromDriveFile(f))
-              .toList() ??
+      // 2. Discover companion artwork/cover images in the same folder
+      final Map<String, String> folderCovers = {};
+      try {
+        String imgQuery = "(mimeType='image/jpeg' or mimeType='image/png' or mimeType='image/webp') and trashed=false";
+        if (targetFolder != null) {
+          imgQuery += " and '$targetFolder' in parents";
+        }
+        final imgList = await _driveApi!.files.list(
+          q: imgQuery,
+          spaces: 'drive',
+          $fields: 'files(id, name, thumbnailLink, webContentLink)',
+          pageSize: 50,
+        );
+        if (imgList.files != null) {
+          for (final img in imgList.files!) {
+            final name = (img.name ?? '').toLowerCase();
+            final imgUrl = img.thumbnailLink ??
+                (img.id != null ? 'https://drive.google.com/thumbnail?id=${img.id}&sz=w400' : null);
+            if (imgUrl != null) {
+              folderCovers[name] = imgUrl;
+            }
+          }
+        }
+      } catch (_) {}
+
+      final generalCover = folderCovers['cover.jpg'] ??
+          folderCovers['cover.png'] ??
+          folderCovers['folder.jpg'] ??
+          folderCovers['albumart.jpg'] ??
+          folderCovers['art.jpg'];
+
+      return fileList.files?.map((f) {
+            final audioFile = DriveAudioFile.fromDriveFile(f);
+            final baseName = (f.name ?? '').replaceAll(RegExp(r'\.[^.]+$'), '').toLowerCase();
+
+            // Match song specific image or folder cover
+            final specificCover = folderCovers['$baseName.jpg'] ??
+                folderCovers['$baseName.png'] ??
+                generalCover;
+
+            if (specificCover != null) {
+              audioFile.coverArtUrl = specificCover;
+            }
+            return audioFile;
+          }).toList() ??
           [];
     } catch (e) {
       if (kDebugMode) print('Error listing audio files: $e');
@@ -267,9 +317,10 @@ class GoogleDriveService {
     try {
       final auth = await _currentUser?.authentication;
       if (auth?.accessToken != null) {
-        return {
+        _cachedAuthHeaders = {
           'Authorization': 'Bearer ${auth!.accessToken}',
         };
+        return _cachedAuthHeaders;
       }
       return null;
     } catch (e) {
@@ -379,8 +430,18 @@ class DriveAudioFile {
   int? bpm;
   final String? customStreamUrl;
 
-  bool get hasEmbeddedCover => (coverArtUrl != null && coverArtUrl!.isNotEmpty) || (thumbnailLink != null && thumbnailLink!.isNotEmpty);
-  String get coverUrl => coverArtUrl ?? thumbnailLink ?? '';
+  bool get hasEmbeddedCover =>
+      (coverArtUrl != null && coverArtUrl!.isNotEmpty) ||
+      (thumbnailLink != null && thumbnailLink!.isNotEmpty);
+
+  String get coverUrl {
+    if (coverArtUrl != null && coverArtUrl!.isNotEmpty) return coverArtUrl!;
+    if (thumbnailLink != null && thumbnailLink!.isNotEmpty) return thumbnailLink!;
+    if (id.isNotEmpty && !id.startsWith('local_')) {
+      return 'https://drive.google.com/thumbnail?id=$id&sz=w220';
+    }
+    return '';
+  }
 
   DriveAudioFile({
     required this.id,
@@ -487,6 +548,8 @@ class DriveAudioFile {
         'genre': genre,
         'energy': energy,
         'bpm': bpm,
+        'thumbnailLink': thumbnailLink,
+        'customStreamUrl': customStreamUrl,
       };
 
   factory DriveAudioFile.fromJson(Map<String, dynamic> json) {
@@ -507,6 +570,48 @@ class DriveAudioFile {
       genre: json['genre'],
       energy: json['energy']?.toDouble(),
       bpm: json['bpm'],
+      thumbnailLink: json['thumbnailLink'],
+      customStreamUrl: json['customStreamUrl'],
+    );
+  }
+
+  DriveAudioFile copyWith({
+    String? id,
+    String? name,
+    String? mimeType,
+    int? fileSize,
+    DateTime? modifiedTime,
+    String? thumbnailLink,
+    String? webContentLink,
+    String? title,
+    String? artist,
+    String? album,
+    int? durationSeconds,
+    String? coverArtUrl,
+    String? mood,
+    String? genre,
+    double? energy,
+    int? bpm,
+    String? customStreamUrl,
+  }) {
+    return DriveAudioFile(
+      id: id ?? this.id,
+      name: name ?? this.name,
+      mimeType: mimeType ?? this.mimeType,
+      fileSize: fileSize ?? this.fileSize,
+      modifiedTime: modifiedTime ?? this.modifiedTime,
+      thumbnailLink: thumbnailLink ?? this.thumbnailLink,
+      webContentLink: webContentLink ?? this.webContentLink,
+      title: title ?? this.title,
+      artist: artist ?? this.artist,
+      album: album ?? this.album,
+      durationSeconds: durationSeconds ?? this.durationSeconds,
+      coverArtUrl: coverArtUrl ?? this.coverArtUrl,
+      mood: mood ?? this.mood,
+      genre: genre ?? this.genre,
+      energy: energy ?? this.energy,
+      bpm: bpm ?? this.bpm,
+      customStreamUrl: customStreamUrl ?? this.customStreamUrl,
     );
   }
 }

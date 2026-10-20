@@ -10,8 +10,13 @@ import 'services/download_service.dart';
 import 'services/connectivity_service.dart';
 import 'screens/splash_screen.dart';
 
-void main() {
+import 'services/local_library_service.dart';
+
+void main() async {
   WidgetsFlutterBinding.ensureInitialized();
+
+  // Initialize persistent local song database
+  await LocalLibraryService().initialize();
 
   // Memory & RAM optimization: Cap Flutter image cache to 40MB max
   PaintingBinding.instance.imageCache.maximumSizeBytes = 40 * 1024 * 1024;
@@ -35,6 +40,7 @@ class AxorApp extends StatelessWidget {
   Widget build(BuildContext context) {
     return MultiProvider(
       providers: [
+        ChangeNotifierProvider.value(value: LocalLibraryService()),
         ChangeNotifierProvider(create: (_) => AuthProvider()),
         ChangeNotifierProvider(create: (_) => DriveProvider()),
         ChangeNotifierProvider(create: (_) => MusicProvider()),

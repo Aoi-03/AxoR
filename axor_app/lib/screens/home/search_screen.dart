@@ -7,8 +7,9 @@ import '../../providers/music_provider.dart';
 import '../../services/audio_player_service.dart';
 import '../../services/connectivity_service.dart';
 import '../../services/download_service.dart';
-import '../../services/google_drive_service.dart';
 import '../../widgets/song_tile.dart';
+import '../../services/search_service.dart';
+import '../../services/local_library_service.dart';
 
 class SearchScreen extends StatefulWidget {
   const SearchScreen({super.key});
@@ -19,6 +20,7 @@ class SearchScreen extends StatefulWidget {
 
 class _SearchScreenState extends State<SearchScreen> {
   final TextEditingController _searchController = TextEditingController();
+  final SearchService _searchService = SearchService(LocalLibraryService());
   String _selectedFilter = 'All';
 
   final List<String> _filters = ['All', 'High Energy', 'Calm', 'Fast BPM (>120)', 'Rock / EDM'];
@@ -27,133 +29,6 @@ class _SearchScreenState extends State<SearchScreen> {
   void dispose() {
     _searchController.dispose();
     super.dispose();
-  }
-
-  /// Bigram Dice coefficient for word-to-word similarity
-  static double _diceSimilarity(String s1, String s2) {
-    if (s1.length < 2 || s2.length < 2) {
-      return s1 == s2 ? 1.0 : 0.0;
-    }
-    final s1Bigrams = <String>{};
-    for (int i = 0; i < s1.length - 1; i++) {
-      s1Bigrams.add(s1.substring(i, i + 2));
-    }
-    int matches = 0;
-    for (int i = 0; i < s2.length - 1; i++) {
-      if (s1Bigrams.contains(s2.substring(i, i + 2))) {
-        matches++;
-      }
-    }
-    return (2.0 * matches) / ((s1.length - 1) + (s2.length - 1));
-  }
-
-  /// Word-to-word similarity algorithm
-  /// Compares each word in the query against words in the song title and artist
-  static double _calculateSimilarity(String query, String targetText) {
-    final q = query.trim().toLowerCase();
-    final t = targetText.trim().toLowerCase();
-    if (q.isEmpty || t.isEmpty) return 0.0;
-    if (t == q) return 1.0;
-    if (t.contains(q)) return 0.85;
-
-    final queryWords = q.split(RegExp(r'[\s\-_.,/]+')).where((w) => w.isNotEmpty).toList();
-    final textWords = t.split(RegExp(r'[\s\-_.,/]+')).where((w) => w.isNotEmpty).toList();
-
-    if (queryWords.isEmpty || textWords.isEmpty) return 0.0;
-
-    double totalScore = 0.0;
-    for (final qWord in queryWords) {
-      double bestWordScore = 0.0;
-      for (final tWord in textWords) {
-        if (tWord == qWord) {
-          bestWordScore = 1.0;
-          break;
-        } else if (tWord.startsWith(qWord) || qWord.startsWith(tWord)) {
-          final maxLen = tWord.length > qWord.length ? tWord.length : qWord.length;
-          final score = 0.8 * (qWord.length / maxLen);
-          if (score > bestWordScore) bestWordScore = score;
-        } else if (tWord.contains(qWord)) {
-          final score = 0.7 * (qWord.length / tWord.length);
-          if (score > bestWordScore) bestWordScore = score;
-        } else {
-          final dice = _diceSimilarity(qWord, tWord);
-          if (dice > 0.55 && dice > bestWordScore) {
-            bestWordScore = dice * 0.75;
-          }
-        }
-      }
-      totalScore += bestWordScore;
-    }
-
-    return totalScore / queryWords.length;
-  }
-
-  List<DriveAudioFile> _searchAndRank({
-    required String query,
-    required bool isOnline,
-    required List<DriveAudioFile> driveFiles,
-    required List<DriveAudioFile> localFiles,
-  }) {
-    // 1. Gather candidates based on network status
-    final List<DriveAudioFile> candidates = [];
-    final Set<String> seenIds = {};
-
-    if (isOnline) {
-      // Online: Search both Google Drive (primary) and local library
-      for (final file in driveFiles) {
-        if (seenIds.add(file.id)) candidates.add(file);
-      }
-      for (final file in localFiles) {
-        if (seenIds.add(file.id)) candidates.add(file);
-      }
-    } else {
-      // Offline: ONLY search local songs
-      for (final file in localFiles) {
-        if (seenIds.add(file.id)) candidates.add(file);
-      }
-    }
-
-    // 2. If no query, apply category chip filter only
-    if (query.trim().isEmpty) {
-      return _applyCategoryFilter(candidates);
-    }
-
-    // 3. Score candidates with word-to-word similarity
-    final scoredList = <MapEntry<DriveAudioFile, double>>[];
-    for (final file in candidates) {
-      final combinedText = '${file.displayTitle} ${file.displayArtist} ${file.album ?? ''}';
-      final score = _calculateSimilarity(query, combinedText);
-
-      // Keep if score meets threshold or substring match
-      if (score >= 0.25 || combinedText.toLowerCase().contains(query.trim().toLowerCase())) {
-        scoredList.add(MapEntry(file, score));
-      }
-    }
-
-    // 4. Rank descending by similarity score
-    scoredList.sort((a, b) => b.value.compareTo(a.value));
-
-    final results = scoredList.map((e) => e.key).toList();
-    return _applyCategoryFilter(results);
-  }
-
-  List<DriveAudioFile> _applyCategoryFilter(List<DriveAudioFile> files) {
-    switch (_selectedFilter) {
-      case 'High Energy':
-        return files.where((s) => (s.energy ?? 0.0) >= 0.7).toList();
-      case 'Calm':
-        return files.where((s) => (s.energy ?? 0.0) <= 0.45).toList();
-      case 'Fast BPM (>120)':
-        return files.where((s) => (s.bpm ?? 0) >= 120).toList();
-      case 'Rock / EDM':
-        return files.where((s) {
-          final g = (s.genre ?? '').toLowerCase();
-          return g.contains('rock') || g.contains('edm') || g.contains('electronic') || g.contains('metal');
-        }).toList();
-      case 'All':
-      default:
-        return files;
-    }
   }
 
   @override
@@ -165,22 +40,16 @@ class _SearchScreenState extends State<SearchScreen> {
     final musicProvider = Provider.of<MusicProvider>(context);
     final downloadService = Provider.of<DownloadService>(context);
 
-    // Build unified local list
-    final List<DriveAudioFile> localFiles = [];
-    final Set<String> localIds = {};
-    for (final d in downloadService.downloadedSongs) {
-      if (localIds.add(d.id)) localFiles.add(d);
-    }
-    for (final s in musicProvider.allSongs) {
-      if (localIds.add(s.id)) localFiles.add(DriveAudioFile.fromSong(s));
-    }
-
-    final results = _searchAndRank(
+    final searchResults = _searchService.search(
       query: _searchController.text,
       isOnline: isOnline,
       driveFiles: driveProvider.audioFiles,
-      localFiles: localFiles,
+      downloadedFiles: downloadService.downloadedSongs,
+      backendSongs: musicProvider.allSongs,
+      categoryFilter: _selectedFilter,
     );
+
+    final results = searchResults.map((r) => r.file).toList();
 
     return Scaffold(
       backgroundColor: Colors.transparent,
@@ -195,7 +64,7 @@ class _SearchScreenState extends State<SearchScreen> {
             children: [
               // Online / Offline Status Chip
               Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 2.0),
+                padding: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 4.0),
                 child: Row(
                   children: [
                     Icon(
@@ -204,14 +73,18 @@ class _SearchScreenState extends State<SearchScreen> {
                       color: isOnline ? AppColors.cyan : AppColors.secondary,
                     ),
                     const SizedBox(width: 6),
-                    Text(
-                      isOnline
-                          ? 'Online: Searching Google Drive & Local Library (Word Match)'
-                          : 'Offline: Searching Local Library Only',
-                      style: TextStyle(
-                        color: isOnline ? AppColors.cyan : AppColors.secondary,
-                        fontSize: 11,
-                        fontWeight: FontWeight.w600,
+                    Expanded(
+                      child: Text(
+                        isOnline
+                            ? 'Online: Searching Google Drive & Local Library'
+                            : 'Offline: Searching Local Library Only',
+                        style: TextStyle(
+                          color: isOnline ? AppColors.cyan : AppColors.secondary,
+                          fontSize: 11,
+                          fontWeight: FontWeight.w600,
+                        ),
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
                       ),
                     ),
                   ],

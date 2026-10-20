@@ -146,8 +146,13 @@ class AudioPlayerService with ChangeNotifier {
       }
     });
 
+    int lastSecond = -1;
     _player.positionStream.listen((pos) {
-      notifyListeners();
+      final currentSecond = pos.inSeconds;
+      if (currentSecond != lastSecond) {
+        lastSecond = currentSecond;
+        notifyListeners();
+      }
     });
   }
 
@@ -162,22 +167,27 @@ class AudioPlayerService with ChangeNotifier {
     try {
       var activeSong = song;
 
-      // ── Offline Fallback Check ──
+      // ── Local-First Playback & Offline Fallback ──
       final isOnline = ConnectivityService().isOnline;
       final isRemoteDrive = activeSong.streamUrl.contains('googleapis.com');
 
-      if (!isOnline && isRemoteDrive) {
-        // Find if downloaded locally
-        final downloadedMatch = DownloadService().downloadedSongs.where(
-          (d) => d.id == song.id || d.displayTitle.toLowerCase() == song.displayTitle.toLowerCase(),
-        ).firstOrNull;
+      // 1. Always prioritize local copy if already downloaded (saves bandwidth & zero latency)
+      final downloadedMatch = DownloadService().downloadedSongs.where(
+        (d) => d.id == song.id || d.displayTitle.toLowerCase() == song.displayTitle.toLowerCase(),
+      ).firstOrNull;
 
-        if (downloadedMatch != null) {
-          activeSong = downloadedMatch;
-          if (kDebugMode) print('🔄 Offline fallback: Playing downloaded copy for ${song.displayTitle}');
-        } else if (DownloadService().downloadedSongs.isNotEmpty) {
+      if (downloadedMatch != null &&
+          downloadedMatch.customStreamUrl != null &&
+          File(downloadedMatch.customStreamUrl!).existsSync()) {
+        activeSong = downloadedMatch;
+        if (kDebugMode) print('⚡ Local-first: Playing cached local file for ${song.displayTitle}');
+      } else if (!isOnline && isRemoteDrive) {
+        // 2. Offline fallback: Cannot stream from remote Drive
+        if (DownloadService().downloadedSongs.isNotEmpty) {
           activeSong = DownloadService().downloadedSongs.first;
-          if (kDebugMode) print('🔄 Offline fallback: Song not downloaded, playing local library: ${activeSong.displayTitle}');
+          if (kDebugMode) print('🔄 Offline fallback: Playing available offline track: ${activeSong.displayTitle}');
+        } else {
+          throw Exception('Song is not available offline and no network connection');
         }
       }
 

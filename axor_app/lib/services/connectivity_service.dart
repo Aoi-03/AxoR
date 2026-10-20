@@ -1,18 +1,21 @@
 import 'dart:async';
 import 'dart:io';
 import 'package:flutter/foundation.dart';
+import 'package:flutter/widgets.dart';
 
 /// ConnectivityService — Lightweight offline/online network detector
 ///
 /// Features:
 /// - Fast network probe via DNS lookup without heavy external dependencies
 /// - Emits online/offline changes to reactive listeners
+/// - Automatically pauses probing in the background to let cellular/Wi-Fi modem sleep
 /// - Used by Offline Fallback, Dynamic Island, and Alternating Library Statistics
-class ConnectivityService with ChangeNotifier {
+class ConnectivityService with ChangeNotifier, WidgetsBindingObserver {
   static final ConnectivityService _instance = ConnectivityService._internal();
   factory ConnectivityService() => _instance;
 
   ConnectivityService._internal() {
+    WidgetsBinding.instance.addObserver(this);
     _startMonitoring();
   }
 
@@ -21,10 +24,24 @@ class ConnectivityService with ChangeNotifier {
 
   Timer? _probeTimer;
 
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.paused || state == AppLifecycleState.detached) {
+      // Pause active network probing in background to save battery and let cellular radio sleep
+      _probeTimer?.cancel();
+      _probeTimer = null;
+    } else if (state == AppLifecycleState.resumed) {
+      // Resume probing when user returns to foreground
+      checkConnection();
+      _startMonitoring();
+    }
+  }
+
   void _startMonitoring() {
+    _probeTimer?.cancel();
     checkConnection();
-    // Periodic probe every 5 seconds to detect online/offline toggles
-    _probeTimer = Timer.periodic(const Duration(seconds: 5), (_) => checkConnection());
+    // 45s interval to allow LTE/5G baseband to drop to low-power idle states
+    _probeTimer = Timer.periodic(const Duration(seconds: 45), (_) => checkConnection());
   }
 
   /// Fast non-blocking internet probe
@@ -53,6 +70,7 @@ class ConnectivityService with ChangeNotifier {
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     _probeTimer?.cancel();
     super.dispose();
   }

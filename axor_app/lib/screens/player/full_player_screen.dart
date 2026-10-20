@@ -15,7 +15,6 @@ class FullPlayerScreen extends StatelessWidget {
         builder: (context, audioPlayer, child) {
           final currentSong = audioPlayer.currentSong;
           final isPlaying = audioPlayer.isPlaying;
-          final position = audioPlayer.position;
           final duration = audioPlayer.duration;
 
           return SafeArea(
@@ -86,52 +85,58 @@ class FullPlayerScreen extends StatelessWidget {
 
                       const SizedBox(height: 30),
 
-                      // Progress Bar
+                      // Progress Bar (Isolated high-efficiency StreamBuilder)
                       Padding(
                         padding: const EdgeInsets.symmetric(horizontal: 32),
-                        child: Column(
-                          children: [
-                            SliderTheme(
-                              data: SliderTheme.of(context).copyWith(
-                                activeTrackColor: AppColors.cyan,
-                                inactiveTrackColor: AppColors.darkGray,
-                                thumbColor: Colors.white,
-                                overlayColor: AppColors.cyan.withValues(alpha: 0.2),
-                                thumbShape: const RoundSliderThumbShape(
-                                  enabledThumbRadius: 6,
-                                ),
-                                trackHeight: 3,
-                              ),
-                              child: Slider(
-                                value: duration.inSeconds > 0
-                                    ? position.inSeconds.toDouble()
-                                    : 0,
-                                max: duration.inSeconds > 0 ? duration.inSeconds.toDouble() : 1,
-                                onChanged: (value) {
-                                  audioPlayer.seek(Duration(seconds: value.toInt()));
-                                },
-                              ),
-                            ),
-                            Row(
-                              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                        child: StreamBuilder<Duration>(
+                          stream: audioPlayer.positionStream,
+                          builder: (context, snapshot) {
+                            final currentPos = snapshot.data ?? audioPlayer.position;
+                            return Column(
                               children: [
-                                Text(
-                                  _formatDuration(position),
-                                  style: const TextStyle(
-                                    color: AppColors.lightGray,
-                                    fontSize: 12,
+                                SliderTheme(
+                                  data: SliderTheme.of(context).copyWith(
+                                    activeTrackColor: AppColors.cyan,
+                                    inactiveTrackColor: AppColors.darkGray,
+                                    thumbColor: Colors.white,
+                                    overlayColor: AppColors.cyan.withValues(alpha: 0.2),
+                                    thumbShape: const RoundSliderThumbShape(
+                                      enabledThumbRadius: 6,
+                                    ),
+                                    trackHeight: 3,
+                                  ),
+                                  child: Slider(
+                                    value: duration.inSeconds > 0
+                                        ? currentPos.inSeconds.toDouble().clamp(0.0, duration.inSeconds.toDouble())
+                                        : 0,
+                                    max: duration.inSeconds > 0 ? duration.inSeconds.toDouble() : 1,
+                                    onChanged: (value) {
+                                      audioPlayer.seek(Duration(seconds: value.toInt()));
+                                    },
                                   ),
                                 ),
-                                Text(
-                                  _formatDuration(duration),
-                                  style: const TextStyle(
-                                    color: AppColors.lightGray,
-                                    fontSize: 12,
-                                  ),
+                                Row(
+                                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                                  children: [
+                                    Text(
+                                      _formatDuration(currentPos),
+                                      style: const TextStyle(
+                                        color: AppColors.lightGray,
+                                        fontSize: 12,
+                                      ),
+                                    ),
+                                    Text(
+                                      _formatDuration(duration),
+                                      style: const TextStyle(
+                                        color: AppColors.lightGray,
+                                        fontSize: 12,
+                                      ),
+                                    ),
+                                  ],
                                 ),
                               ],
-                            ),
-                          ],
+                            );
+                          },
                         ),
                       ),
 
