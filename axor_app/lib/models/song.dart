@@ -50,6 +50,7 @@ class Song {
   final String? localFilePath;       // Path to downloaded/local file
   final DateTime? metadataUpdatedAt;
   final List<String> categoryIds;    // Song category IDs
+  final String? lyricsUrl;           // URL or Drive path to lyrics (.lrc / .txt)
 
   Song({
     required this.id,
@@ -81,14 +82,35 @@ class Song {
     this.localFilePath,
     this.metadataUpdatedAt,
     this.categoryIds = const [],
+    this.lyricsUrl,
   });
   
   // Create Song from JSON
   factory Song.fromJson(Map<String, dynamic> json) {
+    final rawId = json['id'] ?? '';
+    final fileName = json['fileName'];
+    final rawTitle = json['title'] ?? 'Unknown';
+    final rawArtist = json['artist'] ?? 'Unknown Artist';
+
+    // Parse title & artist using the LAST '-' rule if not already cleanly separated
+    String parsedTitle = rawTitle;
+    String parsedArtist = rawArtist;
+
+    if (parsedArtist == 'Unknown Artist' || parsedArtist.isEmpty || rawTitle.contains(' - ')) {
+      final source = (fileName != null && fileName.isNotEmpty)
+          ? fileName.replaceAll(RegExp(r'\.[^.]+$'), '').trim()
+          : (rawId.isNotEmpty ? rawId : rawTitle);
+      final lastDash = source.lastIndexOf('-');
+      if (lastDash > 0 && lastDash < source.length - 1) {
+        parsedArtist = source.substring(0, lastDash).trim();
+        parsedTitle = source.substring(lastDash + 1).trim();
+      }
+    }
+
     return Song(
-      id: json['id'] ?? '',
-      title: json['title'] ?? 'Unknown',
-      artist: json['artist'] ?? 'Unknown Artist',
+      id: rawId,
+      title: parsedTitle,
+      artist: parsedArtist,
       album: json['album'] ?? 'Unknown Album',
       duration: json['duration'] ?? 0,
       bpm: json['bpm'] ?? 120,
@@ -117,6 +139,7 @@ class Song {
           ? DateTime.tryParse(json['metadataUpdatedAt'])
           : null,
       categoryIds: List<String>.from(json['categoryIds'] ?? []),
+      lyricsUrl: json['lyricsUrl'],
     );
   }
   
@@ -152,6 +175,7 @@ class Song {
       'localFilePath': localFilePath,
       'metadataUpdatedAt': metadataUpdatedAt?.toIso8601String(),
       'categoryIds': categoryIds,
+      'lyricsUrl': lyricsUrl,
     };
   }
 
@@ -186,6 +210,7 @@ class Song {
     String? localFilePath,
     DateTime? metadataUpdatedAt,
     List<String>? categoryIds,
+    String? lyricsUrl,
   }) {
     return Song(
       id: id ?? this.id,
@@ -217,6 +242,7 @@ class Song {
       localFilePath: localFilePath ?? this.localFilePath,
       metadataUpdatedAt: metadataUpdatedAt ?? this.metadataUpdatedAt,
       categoryIds: categoryIds ?? this.categoryIds,
+      lyricsUrl: lyricsUrl ?? this.lyricsUrl,
     );
   }
   

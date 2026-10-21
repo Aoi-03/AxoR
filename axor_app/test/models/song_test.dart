@@ -96,5 +96,20 @@ void main() {
       expect(restored.sizeBytes, equals(15420));
       expect(restored.cacheType, equals('artwork'));
     });
+
+    test('Last hyphen rule splits artist and song name correctly without altering ID', () {
+      final json = {
+        'id': 'Arijit Singh;Sachet-Parampara - Pal Pal Dil Ke Paas',
+        'title': 'Arijit Singh;Sachet-Parampara - Pal Pal Dil Ke Paas',
+        'artist': 'Unknown Artist',
+        'fileName': 'Arijit Singh;Sachet-Parampara - Pal Pal Dil Ke Paas.mp3',
+        'lyricsUrl': 'https://drive.google.com/lyrics/test.lrc',
+      };
+      final song = Song.fromJson(json);
+      expect(song.id, equals('Arijit Singh;Sachet-Parampara - Pal Pal Dil Ke Paas'));
+      expect(song.title, equals('Pal Pal Dil Ke Paas'));
+      expect(song.artist, equals('Arijit Singh;Sachet-Parampara'));
+      expect(song.lyricsUrl, equals('https://drive.google.com/lyrics/test.lrc'));
+    });
   });
 }

@@ -169,9 +169,10 @@ class LocalLibraryService with ChangeNotifier {
   Song? findDuplicate(DriveAudioFile file) {
     final songs = getAllSongs();
 
-    // 1. Exact ID match
+    // 1. Exact ID or Provider Track ID match
     for (final song in songs) {
       if (song.id == file.id) return song;
+      if (file.driveFileId != null && file.driveFileId!.isNotEmpty && song.providerTrackId == file.driveFileId) return song;
       if (song.providerTrackId == file.id && file.id.isNotEmpty) return song;
     }
 
@@ -209,6 +210,10 @@ class LocalLibraryService with ChangeNotifier {
   }) async {
     final existing = findDuplicate(driveFile);
 
+    final trackId = (driveFile.driveFileId != null && driveFile.driveFileId!.isNotEmpty)
+        ? driveFile.driveFileId!
+        : driveFile.id;
+
     if (existing != null && existing.id.isNotEmpty) {
       // Update existing record with download info
       final updated = existing.copyWith(
@@ -217,7 +222,8 @@ class LocalLibraryService with ChangeNotifier {
         localFilePath: localFilePath,
         contentHash: contentHash ?? existing.contentHash,
         artworkReference: localCoverPath ?? existing.artworkReference,
-        providerTrackId: driveFile.id.isNotEmpty ? driveFile.id : existing.providerTrackId,
+        providerTrackId: trackId.isNotEmpty ? trackId : existing.providerTrackId,
+        lyricsUrl: driveFile.lyricsUrl ?? existing.lyricsUrl,
         metadataUpdatedAt: DateTime.now(),
       );
       await indexSong(updated);
@@ -244,12 +250,13 @@ class LocalLibraryService with ChangeNotifier {
       format: driveFile.mimeType.contains('flac') ? 'FLAC' : 'MP3',
       sampleRate: 44100,
       bitrate: 1411,
-      providerTrackId: driveFile.id,
+      providerTrackId: trackId,
       availabilityStatus: SongAvailability.downloaded,
       downloadStatus: SongDownloadStatus.downloaded,
       localFilePath: localFilePath,
       contentHash: contentHash,
       artworkReference: localCoverPath,
+      lyricsUrl: driveFile.lyricsUrl,
       metadataUpdatedAt: DateTime.now(),
     );
 

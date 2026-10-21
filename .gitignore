@@ -1,11 +1,21 @@
 # Environment variables & secrets
 **/.env
-**/.env.local
-**/.env.*.local
+**/.env.*
 !**/.env.example
 *.key
 *.pem
 *.keystore
+*.jks
+*.p12
+*.pfx
+*.cer
+*.crt
+key.properties
+*credentials*.json
+*secret*.json
+client_secret*.json
+google-services.json
+GoogleService-Info.plist
 
 # Backend specific
 axor/axor_app_backend/node_modules/

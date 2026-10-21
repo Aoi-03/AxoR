@@ -4,6 +4,7 @@ const path = require('path');
 const fs = require('fs');
 const mm = require('music-metadata');
 const axios = require('axios');
+const crypto = require('crypto');
 require('dotenv').config();
 
 const app = express();
@@ -17,16 +18,53 @@ app.use(cors({
 }));
 app.use(express.json());
 
-// Music library path - YOUR ACTUAL MUSIC FOLDER
-const MUSIC_LIBRARY_PATH = process.env.MUSIC_LIBRARY_PATH || 'D:\\Downloads\\Liked_Songs';
-
-// Serve static files (songs from your library)
-app.use('/songs', express.static(MUSIC_LIBRARY_PATH));
+// Music library path - Auto-resolves from environment variable (.env) or standard folder
+const MUSIC_LIBRARY_PATH = process.env.MUSIC_LIBRARY_PATH || path.join(__dirname, '../songs');
 
 // Database paths (only for users and playlists)
 const DB_PATH = path.join(__dirname, '../database');
 const USERS_DB = path.join(DB_PATH, 'users.json');
 const PLAYLISTS_DB = path.join(DB_PATH, 'playlists.json');
+
+// Discover Database Subfolders if AxoR DataBase structure is present
+function getDatabaseFolders() {
+  const musicDir = fs.existsSync(path.join(MUSIC_LIBRARY_PATH, 'Liked_music'))
+    ? path.join(MUSIC_LIBRARY_PATH, 'Liked_music')
+    : MUSIC_LIBRARY_PATH;
+
+  let logoDir = null;
+  const possibleLogoDirs = [
+    path.join(MUSIC_LIBRARY_PATH, 'Liked_music_logo'),
+    path.join(MUSIC_LIBRARY_PATH, '../Liked_music_logo'),
+    path.join(DB_PATH, 'covers')
+  ];
+  for (const d of possibleLogoDirs) {
+    if (fs.existsSync(d)) {
+      logoDir = d;
+      break;
+    }
+  }
+
+  let lyricsDir = null;
+  const possibleLyricsDirs = [
+    path.join(MUSIC_LIBRARY_PATH, 'Liked_music_lyrics'),
+    path.join(MUSIC_LIBRARY_PATH, '../Liked_music_lyrics')
+  ];
+  for (const d of possibleLyricsDirs) {
+    if (fs.existsSync(d)) {
+      lyricsDir = d;
+      break;
+    }
+  }
+
+  return { musicDir, logoDir, lyricsDir };
+}
+
+// Serve static files (songs from your library)
+app.use('/songs', (req, res, next) => {
+  const { musicDir } = getDatabaseFolders();
+  express.static(musicDir)(req, res, next);
+});
 
 // Metadata cache path
 const METADATA_CACHE_DIR = path.join(__dirname, 'song_metadata_cache');
@@ -372,15 +410,16 @@ function estimateMoodFromGenres(genres) {
 
 // Helper: Scan audio files (MP3, FLAC, M4A, etc.) and extract metadata & covers
 async function scanMusicLibrary() {
-  console.log('🔍 Scanning music library:', MUSIC_LIBRARY_PATH);
+  const { musicDir, logoDir, lyricsDir } = getDatabaseFolders();
+  console.log('🔍 Scanning music library:', musicDir);
   
-  if (!fs.existsSync(MUSIC_LIBRARY_PATH)) {
-    console.error('❌ Music library path does not exist:', MUSIC_LIBRARY_PATH);
+  if (!fs.existsSync(musicDir)) {
+    console.error('❌ Music library path does not exist:', musicDir);
     return [];
   }
   
   const songs = [];
-  const files = fs.readdirSync(MUSIC_LIBRARY_PATH);
+  const files = fs.readdirSync(musicDir);
   const audioExtensions = ['.mp3', '.flac', '.m4a', '.wav', '.ogg', '.aac', '.wma', '.opus'];
   let successCount = 0;
   let errorCount = 0;
@@ -389,10 +428,11 @@ async function scanMusicLibrary() {
     const ext = path.extname(file).toLowerCase();
     if (audioExtensions.includes(ext)) {
       try {
-        const filePath = path.join(MUSIC_LIBRARY_PATH, file);
+        const filePath = path.join(musicDir, file);
         const fileStats = fs.statSync(filePath);
         const baseName = path.basename(file, ext);
-        const songId = `song_${baseName.replace(/[^a-zA-Z0-9]/g, '_').substring(0, 50)}`;
+        // CRITICAL USER REQUIREMENT: Keep song ID as the exact downloaded base name for CSV/feature compatibility
+        const songId = baseName.trim();
 
         // Check if cached metadata exists
         let cached = metadataCache[file];
@@ -409,10 +449,13 @@ async function scanMusicLibrary() {
         const common = metadata ? metadata.common : (cached ? cached.common : {});
         const format = metadata ? metadata.format : (cached ? cached.format : {});
 
-        // Cache cover if available
+        // Safe MD5 hash filename for disk cache to support all special chars and OS compatibility
+        const safeHash = crypto.createHash('md5').update(songId).digest('hex');
+        const coverCachePath = path.join(COVER_CACHE_DIR, `${safeHash}.jpg`);
+
+        // Cache cover if available from embedded picture
         if (metadata && metadata.common && metadata.common.picture && metadata.common.picture.length > 0) {
           try {
-            const coverCachePath = path.join(COVER_CACHE_DIR, `${songId}.jpg`);
             if (!fs.existsSync(coverCachePath)) {
               fs.writeFileSync(coverCachePath, metadata.common.picture[0].data);
             }
@@ -421,19 +464,31 @@ async function scanMusicLibrary() {
           }
         }
 
-        // Clean artist & title
-        let title = common.title || '';
-        let artist = common.artist || '';
+        // Parse artist & title using the LAST '-' rule
+        const lastDash = baseName.lastIndexOf('-');
+        let artist, title;
+        if (lastDash > 0 && lastDash < baseName.length - 1) {
+          artist = baseName.substring(0, lastDash).trim();
+          title = baseName.substring(lastDash + 1).trim();
+        } else {
+          artist = common.artist || 'Unknown Artist';
+          title = common.title || baseName.trim();
+        }
 
-        // If artist or title is empty or "Unknown Artist", parse from "Artist - Title" format
-        if (!title || !artist || artist === 'Unknown Artist') {
-          if (baseName.includes(' - ')) {
-            const parts = baseName.split(' - ');
-            if (!artist || artist === 'Unknown Artist') artist = parts[0].trim();
-            if (!title) title = parts.slice(1).join(' - ').trim();
-          } else {
-            if (!title) title = baseName.trim();
-            if (!artist) artist = 'Unknown Artist';
+        // Auto-check for lyrics in Liked_music_lyrics directory
+        let hasLyrics = false;
+        if (lyricsDir) {
+          const possibleLyrics = [
+            path.join(lyricsDir, `${songId}.lrc`),
+            path.join(lyricsDir, `${songId}.txt`),
+            path.join(lyricsDir, `${title}.lrc`),
+            path.join(lyricsDir, `${title}.txt`)
+          ];
+          for (const ply of possibleLyrics) {
+            if (fs.existsSync(ply)) {
+              hasLyrics = true;
+              break;
+            }
           }
         }
 
@@ -453,7 +508,8 @@ async function scanMusicLibrary() {
           mood: mood,
           genre: (common.genre && common.genre[0]) ? common.genre[0] : 'Music',
           filePath: `/songs/${encodeURIComponent(file)}`,
-          coverPath: 'embedded',
+          coverPath: `/api/songs/cover/${encodeURIComponent(songId)}`,
+          lyricsUrl: hasLyrics ? `/api/songs/lyrics/${encodeURIComponent(songId)}` : null,
           fileSize: fileStats.size,
           format: ext.replace('.', '').toUpperCase(),
           sampleRate: format.sampleRate || 44100,
@@ -498,6 +554,15 @@ async function scanMusicLibrary() {
     console.log(`💾 Saved metadata cache to ${METADATA_CACHE_FILE}`);
   } catch (err) {
     console.error('Error writing metadata cache:', err.message);
+  }
+
+  // Auto-sync index.json
+  try {
+    const indexPath = path.join(MUSIC_LIBRARY_PATH, 'index.json');
+    fs.writeFileSync(indexPath, JSON.stringify(songs, null, 2));
+    console.log(`💾 Auto-saved index.json to ${indexPath}`);
+  } catch (err) {
+    // Non-fatal if read-only
   }
 
   console.log(`\n🎵 Scan complete!`);
@@ -689,18 +754,41 @@ app.get('/api/songs/liked/:userId', (req, res) => {
   res.json({ success: true, songs: likedSongs });
 });
 
-// Get album art from audio file
+// Get album art / logo from Liked_music_logo, disk cache, or embedded audio metadata
 app.get('/api/songs/cover/:songId', async (req, res) => {
-  const { songId } = req.params;
+  const songId = decodeURIComponent(req.params.songId);
+  const { musicDir, logoDir } = getDatabaseFolders();
   
   try {
     const song = songsCache.find(s => s.id === songId);
     if (!song) {
       return res.status(404).json({ success: false, message: 'Song not found' });
     }
+
+    // 1. Check if a logo exists in Liked_music_logo directory
+    if (logoDir) {
+      const possibleLogos = [
+        path.join(logoDir, `${songId}.jpg`),
+        path.join(logoDir, `${songId}.png`),
+        path.join(logoDir, `${songId}.webp`),
+        path.join(logoDir, `${song.title}.jpg`),
+        path.join(logoDir, `${song.title}.png`),
+        path.join(logoDir, `${song.title}.webp`)
+      ];
+      for (const pl of possibleLogos) {
+        if (fs.existsSync(pl)) {
+          const ext = path.extname(pl).toLowerCase();
+          const mime = ext === '.png' ? 'image/png' : ext === '.webp' ? 'image/webp' : 'image/jpeg';
+          res.set('Content-Type', mime);
+          res.set('Cache-Control', 'public, max-age=86400');
+          return res.sendFile(pl);
+        }
+      }
+    }
     
-    // Check if cover is cached
-    const coverCachePath = path.join(COVER_CACHE_DIR, `${songId}.jpg`);
+    // 2. Check if cover is in disk cache (MD5 hashed filename)
+    const safeHash = crypto.createHash('md5').update(songId).digest('hex');
+    const coverCachePath = path.join(COVER_CACHE_DIR, `${safeHash}.jpg`);
     if (fs.existsSync(coverCachePath)) {
       const imageBuffer = fs.readFileSync(coverCachePath);
       res.set('Content-Type', 'image/jpeg');
@@ -713,12 +801,12 @@ app.get('/api/songs/cover/:songId', async (req, res) => {
       return res.status(404).json({ success: false, message: 'File name not found' });
     }
     
-    const filePath = path.join(MUSIC_LIBRARY_PATH, song.fileName);
+    const filePath = path.join(musicDir, song.fileName);
     if (!fs.existsSync(filePath)) {
       return res.status(404).json({ success: false, message: 'Audio file not found on disk' });
     }
     
-    // Extract cover using music-metadata
+    // 3. Extract cover using music-metadata from embedded ID3 picture
     const metadata = await mm.parseFile(filePath);
     if (metadata && metadata.common && metadata.common.picture && metadata.common.picture.length > 0) {
       const picture = metadata.common.picture[0];
@@ -733,6 +821,35 @@ app.get('/api/songs/cover/:songId', async (req, res) => {
     console.error(`❌ Error extracting cover for ${songId}:`, error.message);
     res.status(500).json({ success: false, message: 'Failed to extract cover' });
   }
+});
+
+// Get lyrics for a song from Liked_music_lyrics
+app.get('/api/songs/lyrics/:songId', (req, res) => {
+  const songId = decodeURIComponent(req.params.songId);
+  const { lyricsDir } = getDatabaseFolders();
+
+  const song = songsCache.find(s => s.id === songId);
+  if (!song) {
+    return res.status(404).json({ success: false, message: 'Song not found' });
+  }
+
+  if (lyricsDir) {
+    const possibleLyrics = [
+      path.join(lyricsDir, `${songId}.lrc`),
+      path.join(lyricsDir, `${songId}.txt`),
+      path.join(lyricsDir, `${song.title}.lrc`),
+      path.join(lyricsDir, `${song.title}.txt`)
+    ];
+    for (const ply of possibleLyrics) {
+      if (fs.existsSync(ply)) {
+        res.set('Content-Type', 'text/plain; charset=utf-8');
+        res.set('Cache-Control', 'public, max-age=86400');
+        return res.sendFile(ply);
+      }
+    }
+  }
+
+  return res.status(404).json({ success: false, message: 'No lyrics found for this song' });
 });
 
 // ==================== AI ROUTES ====================

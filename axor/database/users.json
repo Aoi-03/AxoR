@@ -1,7 +1,7 @@
 [
   {
     "id": "user_admin",
-    "email": "a67154512@gmail.com",
+    "email": "admin@example.com",
     "password": "admin123",
     "username": "Admin",
     "plan": "premium",

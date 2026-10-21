@@ -3,6 +3,7 @@ import 'package:provider/provider.dart';
 import '../../constants/colors.dart';
 import '../../services/audio_player_service.dart';
 import '../../widgets/axor_image.dart';
+import '../../widgets/lyrics_sheet.dart';
 
 class FullPlayerScreen extends StatelessWidget {
   const FullPlayerScreen({super.key});
@@ -67,11 +68,11 @@ class FullPlayerScreen extends StatelessWidget {
 
                       const SizedBox(height: 30),
 
-                      // Song Title
+                      // Song Title (Prominently displayed)
                       Padding(
                         padding: const EdgeInsets.symmetric(horizontal: 32),
                         child: Text(
-                          currentSong?.title ?? 'No song playing',
+                          currentSong?.displayTitle ?? 'No song playing',
                           style: const TextStyle(
                             color: Colors.white,
                             fontSize: 24,
@@ -79,6 +80,24 @@ class FullPlayerScreen extends StatelessWidget {
                           ),
                           textAlign: TextAlign.center,
                           maxLines: 2,
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                      ),
+
+                      const SizedBox(height: 6),
+
+                      // Artist Name (Subtitle below title)
+                      Padding(
+                        padding: const EdgeInsets.symmetric(horizontal: 32),
+                        child: Text(
+                          currentSong?.displayArtist ?? 'Unknown Artist',
+                          style: TextStyle(
+                            color: AppColors.textTertiary,
+                            fontSize: 16,
+                            fontWeight: FontWeight.w500,
+                          ),
+                          textAlign: TextAlign.center,
+                          maxLines: 1,
                           overflow: TextOverflow.ellipsis,
                         ),
                       ),
@@ -245,7 +264,47 @@ class FullPlayerScreen extends StatelessWidget {
                         ),
                       ),
 
-                      const SizedBox(height: 30),
+                      const SizedBox(height: 20),
+
+                      // Lyrics Button (On-demand, zero battery/RAM when idle)
+                      Center(
+                        child: InkWell(
+                          onTap: currentSong != null
+                              ? () => LyricsSheet.show(
+                                    context,
+                                    song: currentSong,
+                                    audioPlayer: audioPlayer,
+                                  )
+                              : null,
+                          borderRadius: BorderRadius.circular(20),
+                          child: Container(
+                            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                            decoration: BoxDecoration(
+                              borderRadius: BorderRadius.circular(20),
+                              color: AppColors.surfaceElevated.withAlpha(180),
+                              border: Border.all(color: AppColors.primary.withAlpha(60)),
+                            ),
+                            child: const Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                Icon(Icons.lyrics_rounded, color: AppColors.primary, size: 16),
+                                SizedBox(width: 8),
+                                Text(
+                                  'LYRICS',
+                                  style: TextStyle(
+                                    color: Colors.white,
+                                    fontSize: 12,
+                                    fontWeight: FontWeight.bold,
+                                    letterSpacing: 1.2,
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                        ),
+                      ),
+
+                      const SizedBox(height: 20),
                     ],
                   ),
                 ),
