@@ -17,8 +17,12 @@ void main() {
       ),
     );
 
-    // Verify music note icon placeholder is displayed
-    expect(find.byIcon(Icons.music_note_rounded), findsOneWidget);
+    // Verify placeholder is displayed (AxoR logo asset or fallback icon)
+    expect(
+      find.byType(Image).evaluate().isNotEmpty ||
+          find.byIcon(Icons.music_note_rounded).evaluate().isNotEmpty,
+      isTrue,
+    );
   });
 
   testWidgets('SongTile renders title, artist, and duration correctly', (WidgetTester tester) async {

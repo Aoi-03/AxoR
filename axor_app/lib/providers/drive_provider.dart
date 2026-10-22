@@ -1,4 +1,5 @@
 import 'package:flutter/foundation.dart';
+import '../models/song.dart';
 import '../services/google_drive_service.dart';
 import '../services/local_library_service.dart';
 
@@ -44,6 +45,7 @@ class DriveProvider with ChangeNotifier {
 
       // Reconcile and enrich with cached/local metadata and album artwork
       final localLibrary = LocalLibraryService();
+      final songsToIndex = <Song>[];
       for (final f in _audioFiles) {
         if (f.coverArtUrl == null || f.coverArtUrl!.isEmpty) {
           final matched = localLibrary.findDuplicate(f);
@@ -55,10 +57,15 @@ class DriveProvider with ChangeNotifier {
             }
           }
         }
+        songsToIndex.add(f.toSong());
+      }
+
+      if (songsToIndex.isNotEmpty) {
+        await localLibrary.indexSongs(songsToIndex);
       }
 
       if (kDebugMode) {
-        print('📁 Loaded ${_audioFiles.length} audio files from Drive');
+        print('📁 Loaded ${_audioFiles.length} audio files from Drive (and indexed into local library)');
       }
     } catch (e) {
       _errorMessage = 'Failed to load files from Drive';

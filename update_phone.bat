@@ -21,6 +21,33 @@ if not exist "pubspec.yaml" (
     )
 )
 
+:: Auto-detect Flutter if not in PATH
+where flutter >nul 2>&1
+if errorlevel 1 (
+    if exist "C:\flutter\bin" set "PATH=C:\flutter\bin;!PATH!"
+    if exist "D:\flutter\bin" set "PATH=D:\flutter\bin;!PATH!"
+    if exist "%LOCALAPPDATA%\flutter\bin" set "PATH=%LOCALAPPDATA%\flutter\bin;!PATH!"
+)
+
+:: Auto-detect ADB if not in PATH
+where adb >nul 2>&1
+if errorlevel 1 (
+    if exist "C:\Users\LUNA\AppData\Local\Android\Sdk\platform-tools" set "PATH=C:\Users\LUNA\AppData\Local\Android\Sdk\platform-tools;!PATH!"
+    if exist "%LOCALAPPDATA%\Android\Sdk\platform-tools" set "PATH=%LOCALAPPDATA%\Android\Sdk\platform-tools;!PATH!"
+    if exist "C:\Android\Sdk\platform-tools" set "PATH=C:\Android\Sdk\platform-tools;!PATH!"
+)
+
+:: Check if flutter is found now
+where flutter >nul 2>&1
+if errorlevel 1 (
+    echo [ERROR] Flutter was not found on your system!
+    echo Please make sure Flutter is installed or add its 'bin' folder to PATH.
+    echo Default expected location: C:\flutter\bin
+    echo.
+    pause
+    exit /b 1
+)
+
 echo [*] Checking connected Android devices...
 adb devices
 echo.

@@ -344,6 +344,17 @@ class _LibraryScreenState extends State<LibraryScreen> {
         }
 
         if (allLocalFiles.isEmpty) {
+          final driveProvider = context.watch<DriveProvider>();
+          if (driveProvider.audioFiles.isNotEmpty) {
+            for (final f in driveProvider.audioFiles) {
+              if (seenIds.add(f.id)) {
+                allLocalFiles.add(f);
+              }
+            }
+          }
+        }
+
+        if (allLocalFiles.isEmpty) {
           return Center(
             child: Column(
               mainAxisAlignment: MainAxisAlignment.center,
@@ -360,14 +371,31 @@ class _LibraryScreenState extends State<LibraryScreen> {
                   style: TextStyle(color: AppColors.textSecondary, fontSize: 13),
                 ),
                 const SizedBox(height: 20),
-                ElevatedButton.icon(
-                  icon: const Icon(Icons.refresh),
-                  label: const Text('Rescan Library'),
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: AppColors.primary,
-                    foregroundColor: Colors.black,
-                  ),
-                  onPressed: () => music.rescanLibrary(),
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    ElevatedButton.icon(
+                      icon: const Icon(Icons.refresh),
+                      label: const Text('Rescan Library'),
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: AppColors.primary,
+                        foregroundColor: Colors.black,
+                      ),
+                      onPressed: () {
+                        music.rescanLibrary();
+                        context.read<DriveProvider>().refresh();
+                      },
+                    ),
+                    const SizedBox(width: 12),
+                    OutlinedButton.icon(
+                      icon: const Icon(Icons.cloud_queue_rounded, color: AppColors.primary),
+                      label: const Text('Google Drive', style: TextStyle(color: Colors.white)),
+                      style: OutlinedButton.styleFrom(
+                        side: const BorderSide(color: AppColors.primary),
+                      ),
+                      onPressed: () => setState(() => _selectedTab = 1),
+                    ),
+                  ],
                 ),
               ],
             ),

@@ -7,12 +7,44 @@ import 'package:extension_google_sign_in_as_googleapis_auth/extension_google_sig
 import 'package:http/http.dart' as http;
 import '../models/song.dart';
 
+/// Resolved database folders in Google Drive
+class DatabaseFolders {
+  final List<String> musicFolderIds;
+  final List<String> logoFolderIds;
+  final List<String> lyricsFolderIds;
+  final String primaryMusicFolderId;
+  final String? primaryLogoFolderId;
+  final String? primaryLyricsFolderId;
+
+  DatabaseFolders({
+    required this.musicFolderIds,
+    required this.logoFolderIds,
+    required this.lyricsFolderIds,
+    required this.primaryMusicFolderId,
+    this.primaryLogoFolderId,
+    this.primaryLyricsFolderId,
+  });
+}
+
 /// Google Drive Service
 /// Handles OAuth, file listing, and audio streaming from user's Drive
 class GoogleDriveService {
   static final GoogleDriveService _instance = GoogleDriveService._internal();
   factory GoogleDriveService() => _instance;
   GoogleDriveService._internal();
+
+  /// Audio MIME types supported
+  static const List<String> _audioMimeTypes = [
+    'audio/mpeg',       // .mp3
+    'audio/mp4',        // .m4a
+    'audio/x-m4a',      // .m4a variant
+    'audio/aac',        // .aac
+    'audio/ogg',        // .ogg
+    'audio/flac',       // .flac
+    'audio/wav',        // .wav
+    'audio/x-wav',      // .wav variant
+    'audio/webm',       // .webm
+  ];
 
   final GoogleSignIn _googleSignIn = GoogleSignIn(
     scopes: [
@@ -95,25 +127,115 @@ class GoogleDriveService {
     }
   }
 
+  /// Helper: Check whether a drive file is an audio track by extension or mimeType
+  bool _isAudioDriveFile(drive.File f) {
+    final name = (f.name ?? '').toLowerCase().trim();
+    final mime = (f.mimeType ?? '').toLowerCase().trim();
+
+    // Positive audio extensions
+    for (final ext in [
+      '.mp3',
+      '.flac',
+      '.m4a',
+      '.wav',
+      '.ogg',
+      '.aac',
+      '.opus',
+      '.wma',
+      '.webm'
+    ]) {
+      if (name.endsWith(ext)) return true;
+    }
+
+    // Exclude non-audio files (images, docs, text, json)
+    if (name.endsWith('.json') ||
+        name.endsWith('.jpg') ||
+        name.endsWith('.jpeg') ||
+        name.endsWith('.png') ||
+        name.endsWith('.webp') ||
+        name.endsWith('.lrc') ||
+        name.endsWith('.txt') ||
+        name.endsWith('.pdf')) {
+      return false;
+    }
+
+    if (mime.startsWith('audio/')) return true;
+
+    return false;
+  }
+
   /// Finds or automatically creates the dedicated "AxoR DataBase" (or "AxoR Music") folder in the user's Drive.
+  /// Uses case-insensitive substring matching so "Axor Database", "AxoR DataBase", "AxoR Music", etc. are always found.
   Future<String?> getOrCreateAxorFolder() async {
     if (_driveApi == null) return null;
     if (_axorFolderId != null) return _axorFolderId;
 
     try {
-      final query = "mimeType='application/vnd.google-apps.folder' and (name='AxoR DataBase' or name='AxoR Music') and trashed=false";
+      // 1. Broad query to discover ANY candidate folder in the user's Drive
+      final query = "mimeType='application/vnd.google-apps.folder' and trashed=false and ("
+          "name contains 'AxoR' or name contains 'axor' or name contains 'Axor' or "
+          "name contains 'DataBase' or name contains 'Database' or name contains 'database' or "
+          "name contains 'Music' or name contains 'music')";
+
       final fileList = await _driveApi!.files.list(
         q: query,
         spaces: 'drive',
-        $fields: 'files(id, name)',
+        $fields: 'files(id, name, modifiedTime)',
+        pageSize: 50,
       );
 
       if (fileList.files != null && fileList.files!.isNotEmpty) {
-        _axorFolderId = fileList.files!.first.id;
+        drive.File? bestMatch;
+
+        // Priority 1: Exact / Normalized matches for "AxoR DataBase" variants
+        for (final f in fileList.files!) {
+          final n = (f.name ?? '').toLowerCase().trim().replaceAll('_', ' ').replaceAll('-', ' ');
+          if (n == 'axor database' || n == 'axor data base') {
+            bestMatch = f;
+            break;
+          }
+        }
+
+        // Priority 2: "AxoR Music" variants
+        if (bestMatch == null) {
+          for (final f in fileList.files!) {
+            final n = (f.name ?? '').toLowerCase().trim().replaceAll('_', ' ').replaceAll('-', ' ');
+            if (n == 'axor music') {
+              bestMatch = f;
+              break;
+            }
+          }
+        }
+
+        // Priority 3: Any folder with "axor" in the name
+        if (bestMatch == null) {
+          for (final f in fileList.files!) {
+            final n = (f.name ?? '').toLowerCase();
+            if (n.contains('axor')) {
+              bestMatch = f;
+              break;
+            }
+          }
+        }
+
+        // Priority 4: Any folder containing "music" or "database"
+        if (bestMatch == null) {
+          for (final f in fileList.files!) {
+            final n = (f.name ?? '').toLowerCase();
+            if (n.contains('music') || n.contains('database')) {
+              bestMatch = f;
+              break;
+            }
+          }
+        }
+
+        bestMatch ??= fileList.files!.first;
+        _axorFolderId = bestMatch.id;
+        if (kDebugMode) print('📁 Resolved AxoR folder: "${bestMatch.name}" (ID: $_axorFolderId)');
         return _axorFolderId;
       }
 
-      // Auto-create "AxoR DataBase" folder on first run
+      // Auto-create "AxoR DataBase" folder only if completely absent
       final folderMetadata = drive.File()
         ..name = 'AxoR DataBase'
         ..mimeType = 'application/vnd.google-apps.folder'
@@ -121,6 +243,7 @@ class GoogleDriveService {
 
       final createdFolder = await _driveApi!.files.create(folderMetadata);
       _axorFolderId = createdFolder.id;
+      if (kDebugMode) print('📁 Created initial AxoR DataBase folder: $_axorFolderId');
       return _axorFolderId;
     } catch (e) {
       if (kDebugMode) print('Error finding or creating AxoR folder: $e');
@@ -128,10 +251,24 @@ class GoogleDriveService {
     }
   }
 
-  /// Discovers database subfolders: Liked_music, Liked_music_logo, Liked_music_lyrics
-  Future<Map<String, String>> _resolveDatabaseFolders(String rootFolderId) async {
-    final Map<String, String> subfolders = {};
-    if (_driveApi == null) return subfolders;
+  /// Discovers all database subfolders inside root: Liked_music, Liked_music_logo, Liked_music_lyrics, etc.
+  /// Collects folder IDs so searches encompass the root AND all relevant subfolders.
+  Future<DatabaseFolders> _resolveDatabaseFolders(String rootFolderId) async {
+    final Set<String> musicFolders = {rootFolderId};
+    final Set<String> logoFolders = {rootFolderId};
+    final Set<String> lyricsFolders = {rootFolderId};
+    String? primaryMusic;
+    String? primaryLogo;
+    String? primaryLyrics;
+
+    if (_driveApi == null) {
+      return DatabaseFolders(
+        musicFolderIds: musicFolders.toList(),
+        logoFolderIds: logoFolders.toList(),
+        lyricsFolderIds: lyricsFolders.toList(),
+        primaryMusicFolderId: rootFolderId,
+      );
+    }
 
     try {
       final query = "mimeType='application/vnd.google-apps.folder' and trashed=false and '$rootFolderId' in parents";
@@ -144,21 +281,90 @@ class GoogleDriveService {
 
       if (list.files != null) {
         for (final f in list.files!) {
-          final n = (f.name ?? '').toLowerCase().trim();
-          if (n == 'liked_music' || n == 'liked_songs' || n == 'music') {
-            subfolders['music'] = f.id!;
-          } else if (n == 'liked_music_logo' || n == 'covers' || n == 'logos') {
-            subfolders['logo'] = f.id!;
-          } else if (n == 'liked_music_lyrics' || n == 'lyrics') {
-            subfolders['lyrics'] = f.id!;
+          final id = f.id;
+          if (id == null) continue;
+          final n = (f.name ?? '').toLowerCase().trim().replaceAll(' ', '_').replaceAll('-', '_');
+
+          if (n.contains('logo') || n.contains('cover') || n.contains('art') || n.contains('image')) {
+            logoFolders.add(id);
+            primaryLogo ??= id;
+          } else if (n.contains('lyric') || n.contains('lrc') || n.contains('text')) {
+            lyricsFolders.add(id);
+            primaryLyrics ??= id;
+          } else if (n.contains('music') || n.contains('song') || n.contains('track') || n.contains('audio') || n.contains('liked')) {
+            musicFolders.add(id);
+            primaryMusic ??= id;
+          } else {
+            // General subfolder (could be an artist/album subfolder)
+            musicFolders.add(id);
           }
         }
       }
     } catch (e) {
-      if (kDebugMode) print('Folder discovery error: $e');
+      if (kDebugMode) print('Folder discovery non-fatal: $e');
     }
 
-    return subfolders;
+    return DatabaseFolders(
+      musicFolderIds: musicFolders.toList(),
+      logoFolderIds: logoFolders.toList(),
+      lyricsFolderIds: lyricsFolders.toList(),
+      primaryMusicFolderId: primaryMusic ?? rootFolderId,
+      primaryLogoFolderId: primaryLogo,
+      primaryLyricsFolderId: primaryLyrics,
+    );
+  }
+
+  /// Reads and parses index.json if present in candidate folders
+  Future<Map<String, Map<String, dynamic>>> _readIndexJsonMap(List<String> folderIds) async {
+    final Map<String, Map<String, dynamic>> indexMap = {};
+    if (_driveApi == null) return indexMap;
+
+    for (final folderId in folderIds) {
+      try {
+        final query = "name='index.json' and trashed=false and '$folderId' in parents";
+        final list = await _driveApi!.files.list(
+          q: query,
+          spaces: 'drive',
+          $fields: 'files(id, name)',
+          pageSize: 1,
+        );
+
+        if (list.files != null && list.files!.isNotEmpty) {
+          final fileId = list.files!.first.id!;
+          final media = await _driveApi!.files.get(
+            fileId,
+            downloadOptions: drive.DownloadOptions.fullMedia,
+          ) as drive.Media;
+
+          final bytes = <int>[];
+          await for (final chunk in media.stream) {
+            bytes.addAll(chunk);
+          }
+
+          final jsonStr = utf8.decode(bytes);
+          final dynamic parsed = jsonDecode(jsonStr);
+          if (parsed is List) {
+            for (final item in parsed) {
+              if (item is Map) {
+                final map = Map<String, dynamic>.from(item);
+                final id = (map['id'] ?? '').toString().toLowerCase().trim();
+                final name = (map['name'] ?? '').toString().toLowerCase().trim();
+                final title = (map['title'] ?? '').toString().toLowerCase().trim();
+
+                if (id.isNotEmpty) indexMap[id] = map;
+                if (name.isNotEmpty) indexMap[name] = map;
+                if (title.isNotEmpty) indexMap[title] = map;
+              }
+            }
+          }
+          if (kDebugMode) print('📖 Loaded ${indexMap.length} entries from index.json');
+          break; // Stop after first valid index.json found
+        }
+      } catch (e) {
+        if (kDebugMode) print('Index read non-fatal: $e');
+      }
+    }
+    return indexMap;
   }
 
   /// Asynchronously auto-generate and synchronize index.json in the AxoR DataBase folder
@@ -197,19 +403,6 @@ class GoogleDriveService {
 
   // ── File Listing ──────────────────────────────────────
 
-  /// Audio MIME types we support
-  static const List<String> _audioMimeTypes = [
-    'audio/mpeg',       // .mp3
-    'audio/mp4',        // .m4a
-    'audio/x-m4a',      // .m4a variant
-    'audio/aac',        // .aac
-    'audio/ogg',        // .ogg
-    'audio/flac',       // .flac
-    'audio/wav',        // .wav
-    'audio/x-wav',      // .wav variant
-    'audio/webm',       // .webm
-  ];
-
   /// List audio files from Drive with automatic AxoR DataBase structure mapping:
   /// AxoR DataBase -> index.json, Liked_music, Liked_music_lyrics, Liked_music_logo
   Future<List<DriveAudioFile>> listAudioFiles({
@@ -227,20 +420,13 @@ class GoogleDriveService {
       if (rootFolderId == null) return [];
 
       // 1. Resolve subfolders (Liked_music, Liked_music_logo, Liked_music_lyrics)
-      final subfolders = await _resolveDatabaseFolders(rootFolderId);
-      final musicFolderId = subfolders['music'] ?? rootFolderId;
-      final logoFolderId = subfolders['logo'];
-      final lyricsFolderId = subfolders['lyrics'];
+      final dbFolders = await _resolveDatabaseFolders(rootFolderId);
 
-      // 2. Discover companion artwork/cover images in Liked_music_logo (and root)
+      // 2. Discover companion artwork/cover images in all logo folders
       final Map<String, String> logoMap = {};
       try {
-        final List<String> logoParents = [rootFolderId];
-        if (logoFolderId != null && logoFolderId != rootFolderId) {
-          logoParents.add(logoFolderId);
-        }
-        for (final parent in logoParents) {
-          final imgQuery = "(mimeType='image/jpeg' or mimeType='image/png' or mimeType='image/webp') and trashed=false and '$parent' in parents";
+        for (final parent in dbFolders.logoFolderIds) {
+          final imgQuery = "(mimeType contains 'image/' or name contains '.jpg' or name contains '.png' or name contains '.webp') and trashed=false and '$parent' in parents";
           final imgList = await _driveApi!.files.list(
             q: imgQuery,
             spaces: 'drive',
@@ -271,15 +457,11 @@ class GoogleDriveService {
           logoMap['art'] ??
           logoMap['logo'];
 
-      // 3. Discover companion lyrics in Liked_music_lyrics (and root)
+      // 3. Discover companion lyrics in all lyrics folders
       final Map<String, String> lyricsMap = {};
       try {
-        final List<String> lyricsParents = [rootFolderId];
-        if (lyricsFolderId != null && lyricsFolderId != rootFolderId) {
-          lyricsParents.add(lyricsFolderId);
-        }
-        for (final parent in lyricsParents) {
-          final lrcQuery = "(mimeType='text/plain' or name contains '.lrc' or name contains '.txt') and trashed=false and '$parent' in parents";
+        for (final parent in dbFolders.lyricsFolderIds) {
+          final lrcQuery = "(mimeType contains 'text/' or name contains '.lrc' or name contains '.txt') and trashed=false and '$parent' in parents";
           final lrcList = await _driveApi!.files.list(
             q: lrcQuery,
             spaces: 'drive',
@@ -304,77 +486,159 @@ class GoogleDriveService {
         if (kDebugMode) print('Lyrics discovery non-fatal: $e');
       }
 
-      // 4. Fetch audio files from music folder (or root)
-      final mimeQuery = _audioMimeTypes.map((m) => "mimeType='$m'").join(' or ');
-      String query = '($mimeQuery) and trashed=false and \'$musicFolderId\' in parents';
+      // 4. Try reading index.json if present
+      final indexMap = await _readIndexJsonMap(dbFolders.musicFolderIds);
 
-      final fileList = await _driveApi!.files.list(
-        q: query,
-        spaces: 'drive',
-        $fields:
-            'nextPageToken, files(id, name, mimeType, size, modifiedTime, parents, thumbnailLink, webContentLink)',
-        pageSize: pageSize,
-        pageToken: pageToken,
-        orderBy: 'name',
-      );
+      // 5. Fetch audio files across all music folders (root and subfolders)
+      final List<drive.File> candidateFiles = [];
+      final Set<String> seenDriveFileIds = {};
 
-      final List<DriveAudioFile> result = [];
-      if (fileList.files != null) {
-        for (final f in fileList.files!) {
-          final name = f.name ?? 'Unknown';
-          final baseName = name.replaceAll(RegExp(r'\.[^.]+$'), '').trim();
-          final lowerBase = baseName.toLowerCase();
+      final audioExtQuery = "(mimeType contains 'audio/' or "
+          "mimeType = 'video/mp4' or "
+          "mimeType = 'application/octet-stream' or "
+          "mimeType = 'binary/octet-stream' or "
+          "name contains '.mp3' or "
+          "name contains '.flac' or "
+          "name contains '.m4a' or "
+          "name contains '.wav' or "
+          "name contains '.ogg' or "
+          "name contains '.aac' or "
+          "name contains '.opus' or "
+          "name contains '.wma')";
 
-          // User Rule:
-          // Split on the LAST '-' appeared in the title.
-          // Before last '-' is artist name
-          // After last '-' is song name (which should be displayed prominently / before in app)
-          final lastDash = baseName.lastIndexOf('-');
-          String parsedArtist;
-          String cleanTitle;
-          if (lastDash > 0 && lastDash < baseName.length - 1) {
-            parsedArtist = baseName.substring(0, lastDash).trim();
-            cleanTitle = baseName.substring(lastDash + 1).trim();
-          } else {
-            parsedArtist = 'Unknown Artist';
-            cleanTitle = baseName;
-          }
-          final lowerTitle = cleanTitle.toLowerCase();
-
-          // Auto-map logo
-          final matchedCover = logoMap[lowerBase] ??
-              logoMap['$lowerBase.jpg'] ??
-              logoMap['$lowerBase.png'] ??
-              logoMap[lowerTitle] ??
-              generalCover;
-
-          // Auto-map lyrics
-          final matchedLyrics = lyricsMap[lowerBase] ??
-              lyricsMap['$lowerBase.lrc'] ??
-              lyricsMap['$lowerBase.txt'] ??
-              lyricsMap[lowerTitle];
-
-          final audioFile = DriveAudioFile(
-            id: baseName, // EXACT downloaded name as ID for CSV/AxoR compatibility
-            driveFileId: f.id ?? '',
-            name: name,
-            mimeType: f.mimeType ?? 'audio/mpeg',
-            fileSize: int.tryParse(f.size ?? '0') ?? 0,
-            modifiedTime: f.modifiedTime,
-            thumbnailLink: matchedCover ?? f.thumbnailLink,
-            webContentLink: f.webContentLink,
-            title: cleanTitle,
-            artist: parsedArtist,
-            coverArtUrl: matchedCover,
-            lyricsUrl: matchedLyrics,
+      for (final folderId in dbFolders.musicFolderIds) {
+        try {
+          final folderQuery = "$audioExtQuery and trashed=false and '$folderId' in parents";
+          final fileList = await _driveApi!.files.list(
+            q: folderQuery,
+            spaces: 'drive',
+            $fields:
+                'nextPageToken, files(id, name, mimeType, size, modifiedTime, parents, thumbnailLink, webContentLink)',
+            pageSize: pageSize,
+            orderBy: 'name',
           );
 
-          result.add(audioFile);
+          if (fileList.files != null) {
+            for (final f in fileList.files!) {
+              if (f.id != null && seenDriveFileIds.add(f.id!)) {
+                if (_isAudioDriveFile(f)) {
+                  candidateFiles.add(f);
+                }
+              }
+            }
+          }
+        } catch (e) {
+          if (kDebugMode) print('Error scanning folder $folderId: $e');
         }
       }
 
-      // 5. Asynchronously keep index.json synchronized in the AxoR DataBase folder
+      // 6. Global Drive-Wide Fallback: If no files found in designated folders, scan entire Drive for audio files
+      if (candidateFiles.isEmpty) {
+        if (kDebugMode) print('ℹ️ No audio files in AxoR folder candidates. Searching user Drive globally...');
+        try {
+          final globalQuery = "trashed=false and (mimeType contains 'audio/' or "
+              "name contains '.mp3' or name contains '.flac' or name contains '.m4a' or "
+              "name contains '.wav' or name contains '.ogg' or name contains '.opus')";
+          final globalList = await _driveApi!.files.list(
+            q: globalQuery,
+            spaces: 'drive',
+            $fields:
+                'nextPageToken, files(id, name, mimeType, size, modifiedTime, parents, thumbnailLink, webContentLink)',
+            pageSize: 150,
+            orderBy: 'name',
+          );
+          if (globalList.files != null) {
+            for (final f in globalList.files!) {
+              if (f.id != null && seenDriveFileIds.add(f.id!)) {
+                if (_isAudioDriveFile(f)) {
+                  candidateFiles.add(f);
+                }
+              }
+            }
+          }
+        } catch (e) {
+          if (kDebugMode) print('Global fallback search error: $e');
+        }
+      }
+
+      final List<DriveAudioFile> result = [];
+      for (final f in candidateFiles) {
+        final name = f.name ?? 'Unknown';
+        final baseName = name.replaceAll(RegExp(r'\.[^.]+$'), '').trim();
+        final lowerBase = baseName.toLowerCase();
+
+        // User Rule:
+        // Split on the LAST '-' appeared in the title.
+        // Before last '-' is artist name
+        // After last '-' is song name (which should be displayed prominently / before in app)
+        final lastDash = baseName.lastIndexOf('-');
+        String parsedArtist;
+        String cleanTitle;
+        if (lastDash > 0 && lastDash < baseName.length - 1) {
+          parsedArtist = baseName.substring(0, lastDash).trim();
+          cleanTitle = baseName.substring(lastDash + 1).trim();
+        } else {
+          parsedArtist = 'Unknown Artist';
+          cleanTitle = baseName;
+        }
+        final lowerTitle = cleanTitle.toLowerCase();
+
+        // Check index.json enrichment
+        final indexEntry = indexMap[lowerBase] ?? indexMap[name.toLowerCase()] ?? indexMap[lowerTitle];
+        if (indexEntry != null) {
+          if (indexEntry['title'] != null && indexEntry['title'].toString().isNotEmpty) {
+            cleanTitle = indexEntry['title'].toString();
+          }
+          if (indexEntry['artist'] != null && indexEntry['artist'].toString().isNotEmpty) {
+            parsedArtist = indexEntry['artist'].toString();
+          }
+        }
+
+        // Auto-map logo
+        final matchedCover = logoMap[lowerBase] ??
+            logoMap['$lowerBase.jpg'] ??
+            logoMap['$lowerBase.png'] ??
+            logoMap[lowerTitle] ??
+            (indexEntry?['logoFile'] != null ? logoMap[indexEntry!['logoFile'].toString().toLowerCase()] : null) ??
+            generalCover;
+
+        // Auto-map lyrics
+        final matchedLyrics = lyricsMap[lowerBase] ??
+            lyricsMap['$lowerBase.lrc'] ??
+            lyricsMap['$lowerBase.txt'] ??
+            lyricsMap[lowerTitle] ??
+            (indexEntry?['lyricsFile'] != null ? lyricsMap[indexEntry!['lyricsFile'].toString().toLowerCase()] : null);
+
+        final audioFile = DriveAudioFile(
+          id: baseName, // EXACT downloaded name as ID for CSV/AxoR compatibility
+          driveFileId: f.id ?? '',
+          name: name,
+          mimeType: f.mimeType ?? 'audio/mpeg',
+          fileSize: int.tryParse(f.size ?? '0') ?? 0,
+          modifiedTime: f.modifiedTime,
+          thumbnailLink: matchedCover ?? f.thumbnailLink,
+          webContentLink: f.webContentLink,
+          title: cleanTitle,
+          artist: parsedArtist,
+          album: indexEntry?['album']?.toString(),
+          durationSeconds: indexEntry?['durationSeconds'] ?? indexEntry?['duration'],
+          mood: indexEntry?['mood']?.toString(),
+          genre: indexEntry?['genre']?.toString(),
+          energy: indexEntry?['energy'] != null ? (indexEntry!['energy'] as num).toDouble() : null,
+          bpm: indexEntry?['bpm'] != null ? (indexEntry!['bpm'] as num).toInt() : null,
+          coverArtUrl: matchedCover,
+          lyricsUrl: matchedLyrics,
+        );
+
+        result.add(audioFile);
+      }
+
+      // 7. Asynchronously keep index.json synchronized in the AxoR DataBase folder
       _syncIndexJson(rootFolderId, result);
+
+      if (kDebugMode) {
+        print('✅ listAudioFiles found ${result.length} audio tracks (folders checked: ${dbFolders.musicFolderIds.length})');
+      }
 
       return result;
     } catch (e) {
@@ -523,17 +787,58 @@ class GoogleDriveService {
         } catch (_) {}
       }
 
-      // 2. If it's a local file, upload it to the "AxoR DataBase" folder
-      final folderId = await getOrCreateAxorFolder();
+      // 2. If it's a local file, upload it into the Liked_music subfolder of "AxoR DataBase"
+      final rootFolderId = await getOrCreateAxorFolder();
+      if (rootFolderId == null) return false;
+
+      final subfolders = await _resolveDatabaseFolders(rootFolderId);
+      final musicFolderId = subfolders.primaryMusicFolderId;
+      final logoFolderId = subfolders.primaryLogoFolderId;
+      final lyricsFolderId = subfolders.primaryLyricsFolderId;
+
       if (song.customStreamUrl != null) {
         final localFile = File(song.customStreamUrl!);
         if (localFile.existsSync()) {
           final metadata = drive.File()
             ..name = song.name
-            ..parents = folderId != null ? [folderId] : null
+            ..parents = [musicFolderId]
             ..starred = true;
           final media = drive.Media(localFile.openRead(), localFile.lengthSync());
           await _driveApi!.files.create(metadata, uploadMedia: media);
+
+          // Upload companion cover logo if available locally
+          final localLogoPath = song.coverArtUrl ?? song.thumbnailLink;
+          if (logoFolderId != null && localLogoPath != null) {
+            final logoFile = File(localLogoPath);
+            if (logoFile.existsSync()) {
+              final dotIdx = logoFile.path.lastIndexOf('.');
+              final ext = dotIdx != -1 ? logoFile.path.substring(dotIdx) : '.jpg';
+              final logoMeta = drive.File()
+                ..name = '${song.id}$ext'
+                ..parents = [logoFolderId];
+              await _driveApi!.files.create(
+                logoMeta,
+                uploadMedia: drive.Media(logoFile.openRead(), logoFile.lengthSync()),
+              );
+            }
+          }
+
+          // Upload companion lyrics if available locally
+          if (lyricsFolderId != null && song.lyricsUrl != null) {
+            final lyricsFile = File(song.lyricsUrl!);
+            if (lyricsFile.existsSync()) {
+              final lyricsMeta = drive.File()
+                ..name = '${song.id}.lrc'
+                ..parents = [lyricsFolderId];
+              await _driveApi!.files.create(
+                lyricsMeta,
+                uploadMedia: drive.Media(lyricsFile.openRead(), lyricsFile.lengthSync()),
+              );
+            }
+          }
+
+          // Automatically regenerate & synchronize index.json in the background
+          listAudioFiles();
           return true;
         }
       }
@@ -596,7 +901,7 @@ class DriveAudioFile {
     if (coverArtUrl != null && coverArtUrl!.isNotEmpty) return coverArtUrl!;
     if (thumbnailLink != null && thumbnailLink!.isNotEmpty) return thumbnailLink!;
     final fileId = (driveFileId != null && driveFileId!.isNotEmpty) ? driveFileId! : id;
-    if (fileId.isNotEmpty && !fileId.startsWith('local_')) {
+    if (fileId.isNotEmpty && !fileId.startsWith('local_') && !fileId.contains(' ') && !fileId.contains('.')) {
       return 'https://drive.google.com/thumbnail?id=$fileId&sz=w220';
     }
     return '';
@@ -713,6 +1018,34 @@ class DriveAudioFile {
     }
     final fileId = (driveFileId != null && driveFileId!.isNotEmpty) ? driveFileId! : id;
     return 'https://www.googleapis.com/drive/v3/files/$fileId?alt=media';
+  }
+
+  /// Convert this DriveAudioFile into a persistent local-first Song model
+  Song toSong() {
+    final fmt = (mimeType.contains('/') ? mimeType.split('/').last : 'MP3').toUpperCase();
+    return Song(
+      id: id,
+      title: displayTitle,
+      artist: displayArtist,
+      album: album ?? '',
+      duration: durationSeconds ?? 0,
+      bpm: bpm ?? 0,
+      energy: energy ?? 0.5,
+      mood: mood ?? '',
+      genre: genre ?? '',
+      filePath: streamUrl,
+      coverPath: coverUrl.isNotEmpty ? coverUrl : (thumbnailLink ?? ''),
+      fileSize: fileSize,
+      format: fmt,
+      sampleRate: 44100,
+      bitrate: 320,
+      fileName: name,
+      providerTrackId: (driveFileId != null && driveFileId!.isNotEmpty) ? driveFileId : id,
+      availabilityStatus: SongAvailability.cloud,
+      downloadStatus: SongDownloadStatus.none,
+      artworkReference: coverUrl.isNotEmpty ? coverUrl : thumbnailLink,
+      lyricsUrl: lyricsUrl,
+    );
   }
 
   Map<String, dynamic> toJson() => {
