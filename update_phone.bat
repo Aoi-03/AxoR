@@ -52,13 +52,24 @@ echo [*] Checking connected Android devices...
 adb devices
 echo.
 
+adb reconnect offline >nul 2>&1
 adb get-state >nul 2>&1
+if errorlevel 1 (
+    adb reconnect >nul 2>&1
+    adb get-state >nul 2>&1
+)
 if errorlevel 1 goto :no_device
 
 echo [OK] Phone detected!
 echo.
 echo [*] Building optimized ARM64 release APK (Fast and Lightweight)...
 call flutter build apk --split-per-abi
+if errorlevel 1 (
+    echo.
+    echo [ERROR] Flutter build failed with exit code !errorlevel!
+    pause
+    exit /b 1
+)
 
 set "APK_PATH=build\app\outputs\flutter-apk\app-arm64-v8a-release.apk"
 if not exist "!APK_PATH!" (
