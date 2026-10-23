@@ -59,6 +59,8 @@ class _LyricsSheetState extends State<LyricsSheet> {
       songId: widget.song.id,
       lyricsUrl: widget.song.lyricsUrl,
       localFilePath: widget.song.customStreamUrl,
+      title: widget.song.displayTitle,
+      artist: widget.song.displayArtist,
     );
 
     if (mounted) {

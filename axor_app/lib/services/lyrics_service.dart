@@ -48,6 +48,8 @@ class LyricsService {
     required String songId,
     String? lyricsUrl,
     String? localFilePath,
+    String? title,
+    String? artist,
   }) async {
     // 1. Check in-memory micro-cache (instant return, 0 network, 0 RAM growth)
     if (_cache.containsKey(songId)) {
@@ -72,13 +74,28 @@ class LyricsService {
     if (content == null && lyricsUrl != null && lyricsUrl.isNotEmpty) {
       if (lyricsUrl.startsWith('http://') || lyricsUrl.startsWith('https://')) {
         try {
-          final isDrive = lyricsUrl.contains('drive.google.com') ||
-              lyricsUrl.contains('googleapis.com');
-          final headers = isDrive ? GoogleDriveService().cachedAuthHeaders : null;
+          String resolvedUrl = lyricsUrl;
+          if (resolvedUrl.contains('drive.google.com/file/d/') ||
+              resolvedUrl.contains('drive.google.com/open') ||
+              resolvedUrl.contains('drive.google.com/uc')) {
+            final uri = Uri.tryParse(resolvedUrl);
+            String? fileId = uri?.queryParameters['id'];
+            if (fileId == null || fileId.isEmpty) {
+              final match = RegExp(r'/file/d/([a-zA-Z0-9_-]+)').firstMatch(resolvedUrl);
+              fileId = match?.group(1);
+            }
+            if (fileId != null && fileId.isNotEmpty) {
+              resolvedUrl = 'https://www.googleapis.com/drive/v3/files/$fileId?alt=media';
+            }
+          }
+
+          final isDrive = resolvedUrl.contains('googleapis.com') ||
+              resolvedUrl.contains('drive.google.com');
+          final headers = isDrive ? await GoogleDriveService().getAuthHeaders() : null;
 
           final response = await http
-              .get(Uri.parse(lyricsUrl), headers: headers)
-              .timeout(const Duration(seconds: 4));
+              .get(Uri.parse(resolvedUrl), headers: headers)
+              .timeout(const Duration(seconds: 10));
 
           if (response.statusCode == 200) {
             content = utf8.decode(response.bodyBytes);
@@ -95,6 +112,35 @@ class LyricsService {
           }
         } catch (_) {}
       }
+    }
+
+    // 4. Online fallback via LRCLIB if Drive .lrc not found
+    if (content == null || content.trim().isEmpty) {
+      try {
+        final queryTitle = (title != null && title.isNotEmpty)
+            ? title.replaceAll(RegExp(r'\(.*?\)'), '').trim()
+            : songId;
+        final queryArtist = (artist != null && artist != 'Unknown Artist')
+            ? artist.split(',')[0].split(';')[0].trim()
+            : '';
+
+        final lrcUri = Uri.parse(
+          'https://lrclib.net/api/get?artist_name=${Uri.encodeComponent(queryArtist)}&track_name=${Uri.encodeComponent(queryTitle)}',
+        );
+        final resp = await http.get(lrcUri).timeout(const Duration(seconds: 5));
+        if (resp.statusCode == 200) {
+          final data = jsonDecode(utf8.decode(resp.bodyBytes));
+          if (data is Map) {
+            final synced = data['syncedLyrics']?.toString();
+            final plain = data['plainLyrics']?.toString();
+            if (synced != null && synced.isNotEmpty) {
+              content = synced;
+            } else if (plain != null && plain.isNotEmpty) {
+              content = plain;
+            }
+          }
+        }
+      } catch (_) {}
     }
 
     if (content == null || content.trim().isEmpty) {

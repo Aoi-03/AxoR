@@ -61,13 +61,28 @@ class AxorImage extends StatelessWidget {
       }
     } else if (url.startsWith('http://') || url.startsWith('https://')) {
       // Remote network image with memory-constrained disk caching
-      final isGoogleDrive = url.contains('googleusercontent.com') ||
-          url.contains('drive.google.com') ||
-          url.contains('googleapis.com');
-      final headers = isGoogleDrive ? GoogleDriveService().cachedAuthHeaders : null;
+      String resolvedUrl = url;
+      if (resolvedUrl.contains('drive.google.com/thumbnail') ||
+          resolvedUrl.contains('drive.google.com/uc') ||
+          resolvedUrl.contains('drive.google.com/file/d/')) {
+        final uri = Uri.tryParse(resolvedUrl);
+        String? fileId = uri?.queryParameters['id'];
+        if (fileId == null || fileId.isEmpty) {
+          final match = RegExp(r'/file/d/([a-zA-Z0-9_-]+)').firstMatch(resolvedUrl);
+          fileId = match?.group(1);
+        }
+        if (fileId != null && fileId.isNotEmpty) {
+          resolvedUrl = 'https://www.googleapis.com/drive/v3/files/$fileId?alt=media';
+        }
+      }
+
+      // googleusercontent.com CDN rejects Bearer tokens with 400/403.
+      // Only googleapis.com requires and accepts the Bearer authorization header.
+      final needsAuth = resolvedUrl.contains('googleapis.com');
+      final headers = needsAuth ? GoogleDriveService().cachedAuthHeaders : null;
 
       content = CachedNetworkImage(
-        imageUrl: url,
+        imageUrl: resolvedUrl,
         httpHeaders: headers,
         width: width,
         height: height,

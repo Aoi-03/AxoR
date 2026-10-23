@@ -343,21 +343,38 @@ class GoogleDriveService {
 
           final jsonStr = utf8.decode(bytes);
           final dynamic parsed = jsonDecode(jsonStr);
+          List items = [];
           if (parsed is List) {
-            for (final item in parsed) {
-              if (item is Map) {
-                final map = Map<String, dynamic>.from(item);
-                final id = (map['id'] ?? '').toString().toLowerCase().trim();
-                final name = (map['name'] ?? '').toString().toLowerCase().trim();
-                final title = (map['title'] ?? '').toString().toLowerCase().trim();
+            items = parsed;
+          } else if (parsed is Map && parsed['songs'] is List) {
+            items = parsed['songs'];
+          } else if (parsed is Map && parsed['tracks'] is List) {
+            items = parsed['tracks'];
+          }
 
-                if (id.isNotEmpty) indexMap[id] = map;
-                if (name.isNotEmpty) indexMap[name] = map;
-                if (title.isNotEmpty) indexMap[title] = map;
+          for (final item in items) {
+            if (item is Map) {
+              final map = Map<String, dynamic>.from(item);
+              final id = (map['id'] ?? '').toString().toLowerCase().trim();
+              final name = (map['name'] ?? '').toString().toLowerCase().trim();
+              final title = (map['title'] ?? '').toString().toLowerCase().trim();
+              final artist = (map['artist'] ?? '').toString().toLowerCase().trim();
+              final base = name.replaceAll(RegExp(r'\.[^.]+$'), '').trim();
+
+              if (id.isNotEmpty) indexMap[id] = map;
+              if (name.isNotEmpty) indexMap[name] = map;
+              if (base.isNotEmpty) indexMap[base] = map;
+              if (title.isNotEmpty) indexMap[title] = map;
+              if (artist.isNotEmpty && title.isNotEmpty) {
+                indexMap['$artist - $title'] = map;
+              }
+              final cleanNum = base.replaceFirst(RegExp(r'^\d+[\.\s\-_]+'), '').trim();
+              if (cleanNum.isNotEmpty) {
+                indexMap[cleanNum] = map;
               }
             }
           }
-          if (kDebugMode) print('📖 Loaded ${indexMap.length} entries from index.json');
+          if (kDebugMode) print('📖 Loaded ${indexMap.length} index keys from index.json (folder $folderId)');
           break; // Stop after first valid index.json found
         }
       } catch (e) {
@@ -408,13 +425,13 @@ class GoogleDriveService {
   Future<List<DriveAudioFile>> listAudioFiles({
     String? folderId,
     String? pageToken,
-    int pageSize = 150,
+    int pageSize = 1000,
   }) async {
     if (_driveApi == null) return [];
 
     try {
-      // Refresh headers cache
-      getAuthHeaders();
+      // Pre-refresh headers cache so image and lyrics requests have valid tokens
+      await getAuthHeaders();
 
       final rootFolderId = folderId ?? await getOrCreateAxorFolder();
       if (rootFolderId == null) return [];
@@ -422,30 +439,54 @@ class GoogleDriveService {
       // 1. Resolve subfolders (Liked_music, Liked_music_logo, Liked_music_lyrics)
       final dbFolders = await _resolveDatabaseFolders(rootFolderId);
 
-      // 2. Discover companion artwork/cover images in all logo folders
+      // 2. Discover companion artwork/cover images in all logo folders (with full pagination)
       final Map<String, String> logoMap = {};
       try {
         for (final parent in dbFolders.logoFolderIds) {
-          final imgQuery = "(mimeType contains 'image/' or name contains '.jpg' or name contains '.png' or name contains '.webp') and trashed=false and '$parent' in parents";
-          final imgList = await _driveApi!.files.list(
-            q: imgQuery,
-            spaces: 'drive',
-            $fields: 'files(id, name, thumbnailLink, webContentLink)',
-            pageSize: 150,
-          );
-          if (imgList.files != null) {
-            for (final img in imgList.files!) {
-              final raw = (img.name ?? '').toLowerCase().trim();
-              final base = raw.replaceAll(RegExp(r'\.[^.]+$'), '').trim();
-              final imgUrl = 'https://drive.google.com/thumbnail?id=${img.id}&sz=w400';
-              logoMap[base] = imgUrl;
-              logoMap[raw] = imgUrl;
-              final dash = base.lastIndexOf('-');
-              if (dash > 0 && dash < base.length - 1) {
-                logoMap[base.substring(dash + 1).trim()] = imgUrl;
+          final isDedicated = parent != rootFolderId;
+          final imgQuery = isDedicated
+              ? "trashed=false and '$parent' in parents"
+              : "(mimeType contains 'image/' or name contains '.jpg' or name contains '.png' or name contains '.webp') and trashed=false and '$parent' in parents";
+
+          String? pToken;
+          do {
+            final imgList = await _driveApi!.files.list(
+              q: imgQuery,
+              spaces: 'drive',
+              $fields: 'nextPageToken, files(id, name, thumbnailLink, webContentLink)',
+              pageSize: 1000,
+              pageToken: pToken,
+            );
+            if (imgList.files != null) {
+              for (final img in imgList.files!) {
+                final raw = (img.name ?? '').toLowerCase().trim();
+                final base = raw.replaceAll(RegExp(r'\.[^.]+$'), '').trim();
+
+                // High-resolution Google CDN thumbnail or direct Drive API media URL
+                final imgUrl = (img.thumbnailLink != null && img.thumbnailLink!.isNotEmpty)
+                    ? img.thumbnailLink!.replaceAll(RegExp(r'=s\d+'), '=s500')
+                    : 'https://www.googleapis.com/drive/v3/files/${img.id}?alt=media';
+
+                logoMap[base] = imgUrl;
+                logoMap[raw] = imgUrl;
+
+                // Stripped track numbers (e.g. "01. Song" -> "song")
+                final cleanNum = base.replaceFirst(RegExp(r'^\d+[\.\s\-_]+'), '').trim();
+                if (cleanNum.isNotEmpty) {
+                  logoMap[cleanNum] = imgUrl;
+                }
+
+                final dash = base.lastIndexOf('-');
+                if (dash > 0 && dash < base.length - 1) {
+                  final artistPart = base.substring(0, dash).trim();
+                  final titlePart = base.substring(dash + 1).trim();
+                  logoMap[titlePart] = imgUrl;
+                  logoMap['$artistPart - $titlePart'] = imgUrl;
+                }
               }
             }
-          }
+            pToken = imgList.nextPageToken;
+          } while (pToken != null && pToken.isNotEmpty);
         }
       } catch (e) {
         if (kDebugMode) print('Artwork discovery non-fatal: $e');
@@ -457,39 +498,57 @@ class GoogleDriveService {
           logoMap['art'] ??
           logoMap['logo'];
 
-      // 3. Discover companion lyrics in all lyrics folders
+      // 3. Discover companion lyrics in all lyrics folders (with full pagination)
       final Map<String, String> lyricsMap = {};
       try {
         for (final parent in dbFolders.lyricsFolderIds) {
-          final lrcQuery = "(mimeType contains 'text/' or name contains '.lrc' or name contains '.txt') and trashed=false and '$parent' in parents";
-          final lrcList = await _driveApi!.files.list(
-            q: lrcQuery,
-            spaces: 'drive',
-            $fields: 'files(id, name, webContentLink)',
-            pageSize: 150,
-          );
-          if (lrcList.files != null) {
-            for (final lrc in lrcList.files!) {
-              final raw = (lrc.name ?? '').toLowerCase().trim();
-              final base = raw.replaceAll(RegExp(r'\.[^.]+$'), '').trim();
-              final lrcUrl = 'https://www.googleapis.com/drive/v3/files/${lrc.id}?alt=media';
-              lyricsMap[base] = lrcUrl;
-              lyricsMap[raw] = lrcUrl;
-              final dash = base.lastIndexOf('-');
-              if (dash > 0 && dash < base.length - 1) {
-                lyricsMap[base.substring(dash + 1).trim()] = lrcUrl;
+          final isDedicated = parent != rootFolderId;
+          final lrcQuery = isDedicated
+              ? "trashed=false and '$parent' in parents"
+              : "(mimeType contains 'text/' or name contains '.lrc' or name contains '.txt') and trashed=false and '$parent' in parents";
+
+          String? pToken;
+          do {
+            final lrcList = await _driveApi!.files.list(
+              q: lrcQuery,
+              spaces: 'drive',
+              $fields: 'nextPageToken, files(id, name, webContentLink)',
+              pageSize: 1000,
+              pageToken: pToken,
+            );
+            if (lrcList.files != null) {
+              for (final lrc in lrcList.files!) {
+                final raw = (lrc.name ?? '').toLowerCase().trim();
+                final base = raw.replaceAll(RegExp(r'\.[^.]+$'), '').trim();
+                final lrcUrl = 'https://www.googleapis.com/drive/v3/files/${lrc.id}?alt=media';
+                lyricsMap[base] = lrcUrl;
+                lyricsMap[raw] = lrcUrl;
+
+                final cleanNum = base.replaceFirst(RegExp(r'^\d+[\.\s\-_]+'), '').trim();
+                if (cleanNum.isNotEmpty) {
+                  lyricsMap[cleanNum] = lrcUrl;
+                }
+
+                final dash = base.lastIndexOf('-');
+                if (dash > 0 && dash < base.length - 1) {
+                  final artistPart = base.substring(0, dash).trim();
+                  final titlePart = base.substring(dash + 1).trim();
+                  lyricsMap[titlePart] = lrcUrl;
+                  lyricsMap['$artistPart - $titlePart'] = lrcUrl;
+                }
               }
             }
-          }
+            pToken = lrcList.nextPageToken;
+          } while (pToken != null && pToken.isNotEmpty);
         }
       } catch (e) {
         if (kDebugMode) print('Lyrics discovery non-fatal: $e');
       }
 
-      // 4. Try reading index.json if present
-      final indexMap = await _readIndexJsonMap(dbFolders.musicFolderIds);
+      // 4. Try reading index.json if present (check rootFolderId first)
+      final indexMap = await _readIndexJsonMap([rootFolderId, ...dbFolders.musicFolderIds]);
 
-      // 5. Fetch audio files across all music folders (root and subfolders)
+      // 5. Fetch audio files across all music folders with FULL pagination
       final List<drive.File> candidateFiles = [];
       final Set<String> seenDriveFileIds = {};
 
@@ -508,54 +567,69 @@ class GoogleDriveService {
 
       for (final folderId in dbFolders.musicFolderIds) {
         try {
-          final folderQuery = "$audioExtQuery and trashed=false and '$folderId' in parents";
-          final fileList = await _driveApi!.files.list(
-            q: folderQuery,
-            spaces: 'drive',
-            $fields:
-                'nextPageToken, files(id, name, mimeType, size, modifiedTime, parents, thumbnailLink, webContentLink)',
-            pageSize: pageSize,
-            orderBy: 'name',
-          );
+          final isDedicated = folderId != rootFolderId;
+          final folderQuery = isDedicated
+              ? "mimeType != 'application/vnd.google-apps.folder' and trashed=false and '$folderId' in parents"
+              : "$audioExtQuery and trashed=false and '$folderId' in parents";
 
-          if (fileList.files != null) {
-            for (final f in fileList.files!) {
-              if (f.id != null && seenDriveFileIds.add(f.id!)) {
-                if (_isAudioDriveFile(f)) {
-                  candidateFiles.add(f);
+          String? pToken;
+          do {
+            final fileList = await _driveApi!.files.list(
+              q: folderQuery,
+              spaces: 'drive',
+              $fields:
+                  'nextPageToken, files(id, name, mimeType, size, modifiedTime, parents, thumbnailLink, webContentLink)',
+              pageSize: 1000,
+              pageToken: pToken,
+              orderBy: 'name',
+            );
+
+            if (fileList.files != null) {
+              for (final f in fileList.files!) {
+                if (f.id != null && seenDriveFileIds.add(f.id!)) {
+                  if (_isAudioDriveFile(f)) {
+                    candidateFiles.add(f);
+                  }
                 }
               }
             }
-          }
+            pToken = fileList.nextPageToken;
+          } while (pToken != null && pToken.isNotEmpty);
         } catch (e) {
           if (kDebugMode) print('Error scanning folder $folderId: $e');
         }
       }
 
-      // 6. Global Drive-Wide Fallback: If no files found in designated folders, scan entire Drive for audio files
+      // 6. Global Drive-Wide Fallback: If no files found in designated folders, scan entire Drive for audio files with pagination
       if (candidateFiles.isEmpty) {
         if (kDebugMode) print('ℹ️ No audio files in AxoR folder candidates. Searching user Drive globally...');
         try {
           final globalQuery = "trashed=false and (mimeType contains 'audio/' or "
               "name contains '.mp3' or name contains '.flac' or name contains '.m4a' or "
               "name contains '.wav' or name contains '.ogg' or name contains '.opus')";
-          final globalList = await _driveApi!.files.list(
-            q: globalQuery,
-            spaces: 'drive',
-            $fields:
-                'nextPageToken, files(id, name, mimeType, size, modifiedTime, parents, thumbnailLink, webContentLink)',
-            pageSize: 150,
-            orderBy: 'name',
-          );
-          if (globalList.files != null) {
-            for (final f in globalList.files!) {
-              if (f.id != null && seenDriveFileIds.add(f.id!)) {
-                if (_isAudioDriveFile(f)) {
-                  candidateFiles.add(f);
+
+          String? pToken;
+          do {
+            final globalList = await _driveApi!.files.list(
+              q: globalQuery,
+              spaces: 'drive',
+              $fields:
+                  'nextPageToken, files(id, name, mimeType, size, modifiedTime, parents, thumbnailLink, webContentLink)',
+              pageSize: 1000,
+              pageToken: pToken,
+              orderBy: 'name',
+            );
+            if (globalList.files != null) {
+              for (final f in globalList.files!) {
+                if (f.id != null && seenDriveFileIds.add(f.id!)) {
+                  if (_isAudioDriveFile(f)) {
+                    candidateFiles.add(f);
+                  }
                 }
               }
             }
-          }
+            pToken = globalList.nextPageToken;
+          } while (pToken != null && pToken.isNotEmpty);
         } catch (e) {
           if (kDebugMode) print('Global fallback search error: $e');
         }
@@ -566,6 +640,8 @@ class GoogleDriveService {
         final name = f.name ?? 'Unknown';
         final baseName = name.replaceAll(RegExp(r'\.[^.]+$'), '').trim();
         final lowerBase = baseName.toLowerCase();
+        final cleanBase = baseName.replaceFirst(RegExp(r'^\d+[\.\s\-_]+'), '').trim();
+        final lowerClean = cleanBase.toLowerCase();
 
         // User Rule:
         // Split on the LAST '-' appeared in the title.
@@ -584,7 +660,10 @@ class GoogleDriveService {
         final lowerTitle = cleanTitle.toLowerCase();
 
         // Check index.json enrichment
-        final indexEntry = indexMap[lowerBase] ?? indexMap[name.toLowerCase()] ?? indexMap[lowerTitle];
+        final indexEntry = indexMap[lowerBase] ??
+            indexMap[lowerClean] ??
+            indexMap[name.toLowerCase()] ??
+            indexMap[lowerTitle];
         if (indexEntry != null) {
           if (indexEntry['title'] != null && indexEntry['title'].toString().isNotEmpty) {
             cleanTitle = indexEntry['title'].toString();
@@ -595,19 +674,28 @@ class GoogleDriveService {
         }
 
         // Auto-map logo
-        final matchedCover = logoMap[lowerBase] ??
+        final logoFileRef = indexEntry?['logoFile']?.toString().toLowerCase().trim();
+        final logoBaseRef = logoFileRef?.replaceAll(RegExp(r'\.[^.]+$'), '').trim();
+
+        final matchedCover = (logoFileRef != null ? (logoMap[logoFileRef] ?? (logoBaseRef != null ? logoMap[logoBaseRef] : null)) : null) ??
+            logoMap[lowerBase] ??
+            logoMap[lowerClean] ??
             logoMap['$lowerBase.jpg'] ??
             logoMap['$lowerBase.png'] ??
             logoMap[lowerTitle] ??
-            (indexEntry?['logoFile'] != null ? logoMap[indexEntry!['logoFile'].toString().toLowerCase()] : null) ??
+            (f.thumbnailLink != null && f.thumbnailLink!.isNotEmpty ? f.thumbnailLink!.replaceAll(RegExp(r'=s\d+'), '=s500') : null) ??
             generalCover;
 
         // Auto-map lyrics
-        final matchedLyrics = lyricsMap[lowerBase] ??
+        final lyricsFileRef = indexEntry?['lyricsFile']?.toString().toLowerCase().trim();
+        final lyricsBaseRef = lyricsFileRef?.replaceAll(RegExp(r'\.[^.]+$'), '').trim();
+
+        final matchedLyrics = (lyricsFileRef != null ? (lyricsMap[lyricsFileRef] ?? (lyricsBaseRef != null ? lyricsMap[lyricsBaseRef] : null)) : null) ??
+            lyricsMap[lowerBase] ??
+            lyricsMap[lowerClean] ??
             lyricsMap['$lowerBase.lrc'] ??
             lyricsMap['$lowerBase.txt'] ??
-            lyricsMap[lowerTitle] ??
-            (indexEntry?['lyricsFile'] != null ? lyricsMap[indexEntry!['lyricsFile'].toString().toLowerCase()] : null);
+            lyricsMap[lowerTitle];
 
         final audioFile = DriveAudioFile(
           id: baseName, // EXACT downloaded name as ID for CSV/AxoR compatibility
@@ -616,7 +704,7 @@ class GoogleDriveService {
           mimeType: f.mimeType ?? 'audio/mpeg',
           fileSize: int.tryParse(f.size ?? '0') ?? 0,
           modifiedTime: f.modifiedTime,
-          thumbnailLink: matchedCover ?? f.thumbnailLink,
+          thumbnailLink: matchedCover ?? f.thumbnailLink?.replaceAll(RegExp(r'=s\d+'), '=s500'),
           webContentLink: f.webContentLink,
           title: cleanTitle,
           artist: parsedArtist,
@@ -633,11 +721,13 @@ class GoogleDriveService {
         result.add(audioFile);
       }
 
-      // 7. Asynchronously keep index.json synchronized in the AxoR DataBase folder
-      _syncIndexJson(rootFolderId, result);
+      // 7. Auto-generate index.json ONLY if one didn't already exist (protect user's database)
+      if (indexMap.isEmpty) {
+        _syncIndexJson(rootFolderId, result);
+      }
 
       if (kDebugMode) {
-        print('✅ listAudioFiles found ${result.length} audio tracks (folders checked: ${dbFolders.musicFolderIds.length})');
+        print('✅ listAudioFiles loaded ${result.length} audio tracks (folders checked: ${dbFolders.musicFolderIds.length})');
       }
 
       return result;
@@ -898,11 +988,21 @@ class DriveAudioFile {
       (thumbnailLink != null && thumbnailLink!.isNotEmpty);
 
   String get coverUrl {
-    if (coverArtUrl != null && coverArtUrl!.isNotEmpty) return coverArtUrl!;
-    if (thumbnailLink != null && thumbnailLink!.isNotEmpty) return thumbnailLink!;
+    if (coverArtUrl != null && coverArtUrl!.isNotEmpty) {
+      if (coverArtUrl!.contains('googleusercontent.com') && coverArtUrl!.contains('=s')) {
+        return coverArtUrl!.replaceAll(RegExp(r'=s\d+'), '=s500');
+      }
+      return coverArtUrl!;
+    }
+    if (thumbnailLink != null && thumbnailLink!.isNotEmpty) {
+      if (thumbnailLink!.contains('googleusercontent.com') && thumbnailLink!.contains('=s')) {
+        return thumbnailLink!.replaceAll(RegExp(r'=s\d+'), '=s500');
+      }
+      return thumbnailLink!;
+    }
     final fileId = (driveFileId != null && driveFileId!.isNotEmpty) ? driveFileId! : id;
     if (fileId.isNotEmpty && !fileId.startsWith('local_') && !fileId.contains(' ') && !fileId.contains('.')) {
-      return 'https://drive.google.com/thumbnail?id=$fileId&sz=w220';
+      return 'https://www.googleapis.com/drive/v3/files/$fileId?alt=media';
     }
     return '';
   }
