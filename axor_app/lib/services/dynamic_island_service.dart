@@ -76,8 +76,8 @@ class DynamicIslandService {
         'isPlaying': isPlaying,
         'isLiked': isLiked,
         if (coverUrl != null && coverUrl.isNotEmpty) 'coverUrl': coverUrl,
-        if (positionMs != null) 'positionMs': positionMs,
-        if (durationMs != null) 'durationMs': durationMs,
+        'positionMs': ?positionMs,
+        'durationMs': ?durationMs,
       });
 
       if (_syncLockscreenWallpaper && coverUrl != null && coverUrl.isNotEmpty) {
@@ -99,13 +99,13 @@ class DynamicIslandService {
     if (!_enabled) return;
     try {
       await _channel.invokeMethod('updateIsland', {
-        if (title != null) 'title': title,
-        if (artist != null) 'artist': artist,
+        'title': ?title,
+        'artist': ?artist,
         'isPlaying': isPlaying,
-        if (isLiked != null) 'isLiked': isLiked,
+        'isLiked': ?isLiked,
         if (coverUrl != null && coverUrl.isNotEmpty) 'coverUrl': coverUrl,
-        if (positionMs != null) 'positionMs': positionMs,
-        if (durationMs != null) 'durationMs': durationMs,
+        'positionMs': ?positionMs,
+        'durationMs': ?durationMs,
       });
 
       if (_syncLockscreenWallpaper && coverUrl != null && coverUrl.isNotEmpty) {

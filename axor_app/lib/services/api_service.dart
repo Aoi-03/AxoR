@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
 import 'api_config.dart';
 import '../models/song.dart';
@@ -15,7 +16,7 @@ class ApiService {
       ).timeout(const Duration(seconds: 4));
       return response.statusCode == 200;
     } catch (e) {
-      print('Connection error: $e');
+      if (kDebugMode) print('Connection error: $e');
       return false;
     }
   }
@@ -35,7 +36,7 @@ class ApiService {
       }
       return [];
     } catch (e) {
-      print('Error fetching songs: $e');
+      if (kDebugMode) print('Error fetching songs: $e');
       return [];
     }
   }
@@ -56,7 +57,7 @@ class ApiService {
       }
       return [];
     } catch (e) {
-      print('Error searching songs: $e');
+      if (kDebugMode) print('Error searching songs: $e');
       return [];
     }
   }
@@ -77,7 +78,7 @@ class ApiService {
       }
       return [];
     } catch (e) {
-      print('Error getting similar songs: $e');
+      if (kDebugMode) print('Error getting similar songs: $e');
       return [];
     }
   }
@@ -98,7 +99,7 @@ class ApiService {
       }
       return [];
     } catch (e) {
-      print('Error getting AI similar songs: $e');
+      if (kDebugMode) print('Error getting AI similar songs: $e');
       return [];
     }
   }
@@ -119,7 +120,7 @@ class ApiService {
       }
       return [];
     } catch (e) {
-      print('Error getting smart mode songs: $e');
+      if (kDebugMode) print('Error getting smart mode songs: $e');
       return [];
     }
   }
@@ -138,7 +139,7 @@ class ApiService {
       }
       return null;
     } catch (e) {
-      print('Error logging in: $e');
+      if (kDebugMode) print('Error logging in: $e');
       return null;
     }
   }
@@ -151,7 +152,7 @@ class ApiService {
       );
       return response.statusCode == 200;
     } catch (e) {
-      print('Error rescanning library: $e');
+      if (kDebugMode) print('Error rescanning library: $e');
       return false;
     }
   }
@@ -176,7 +177,7 @@ class ApiService {
       }
       return [];
     } catch (e) {
-      print('Error getting vibes: $e');
+      if (kDebugMode) print('Error getting vibes: $e');
       return [];
     }
   }
