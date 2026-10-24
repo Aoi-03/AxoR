@@ -34,7 +34,7 @@ class LocalLibraryService with ChangeNotifier {
   Box<String>? _metaBox;
 
   bool _isInitialized = false;
-  bool _isScanning = false;
+  final bool _isScanning = false;
   int _totalSongs = 0;
   int _localSongs = 0;
   int _downloadedSongs = 0;

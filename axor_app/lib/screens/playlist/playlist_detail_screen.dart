@@ -28,7 +28,7 @@ class PlaylistDetailScreen extends StatefulWidget {
 
 class _PlaylistDetailScreenState extends State<PlaylistDetailScreen> {
   final Set<int> _likedSongs = {}; // Track liked songs by index
-  bool _isPremiumUser = true; // TODO: Get from backend
+  final bool _isPremiumUser = true; // TODO: Get from backend
   List<Song> songs = [];
   bool isLoading = true;
 

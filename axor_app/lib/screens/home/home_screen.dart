@@ -57,7 +57,7 @@ class _HomeScreenState extends State<HomeScreen> {
                 child: Image.asset(
                   'assets/logo.png',
                   fit: BoxFit.cover,
-                  errorBuilder: (_, __, ___) => const Icon(Icons.music_note, color: AppColors.primary, size: 18),
+                  errorBuilder: (_, _, _) => const Icon(Icons.music_note, color: AppColors.primary, size: 18),
                 ),
               ),
             ),

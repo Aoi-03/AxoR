@@ -214,7 +214,7 @@ class ProfileScreen extends StatelessWidget {
                         : Image.asset(
                             'assets/logo.png',
                             fit: BoxFit.cover,
-                            errorBuilder: (_, __, ___) => const Icon(
+                            errorBuilder: (_, _, _) => const Icon(
                               Icons.person_rounded,
                               color: AppColors.primary,
                               size: 32,
