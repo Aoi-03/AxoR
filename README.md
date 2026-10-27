@@ -1,6 +1,6 @@
 # AXOR Music Player
 
-A high-performance, battery-optimized music streaming and local player built with Flutter and Node.js.
+A high-performance, battery-optimized music streaming and local player bult with Flutter and Node.js.
 
 ## Highlights
 - **Cloud & Offline Sync**: Seamless streaming from your personal Google Drive database with local-first offline caching via Hive.
